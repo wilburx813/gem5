@@ -1,0 +1,8 @@
+cpu-type: X86AtomicSimpleCPU
+num-cpus: 1
+mem-type: DDR3_1600_8x8
+mem-size: 512MiB
+caches: false
+l2cache: false
+cacheline_size: 64
+cmd: tests/test-progs/hello/bin/x86/linux/hello

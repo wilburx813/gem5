@@ -1,0 +1,16 @@
+cpu-type: X86TimingSimpleCPU
+num-cpus: 4
+sys-clock: 1GHz
+cpu-clock: 2GHz
+mem-type: DDR3_1600_8x8
+mem-size: 8GB
+mem-channels: 4
+mem-channels-intlv: 256
+caches: true
+l2cache: true
+l1d_size: 32KiB
+l1i_size: 32KiB
+l2_size: 2MiB
+cacheline_size: 64
+cmd: tests/test-progs/threads/bin/x86/linux/threads
+options: 50000

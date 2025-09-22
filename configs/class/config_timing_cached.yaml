@@ -1,0 +1,13 @@
+cpu-type: X86TimingSimpleCPU
+num-cpus: 2
+mem-type: DDR4_2400_8x8
+mem-size: 2GB
+mem-channels: 1
+caches: true
+l2cache: true
+l1d_size: 64KiB
+l1i_size: 32KiB
+l2_size: 1MiB
+cacheline_size: 64
+cmd: tests/test-progs/threads/bin/x86/linux/threads
+options: 20000
