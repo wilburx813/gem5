@@ -41,4 +41,6 @@ echo "$GEM5_BIN $GEM5_SCRIPT ${args[*]}"
 # exec $GEM5_BIN $GEM5_SCRIPT "${args[@]}"
 $GEM5_BIN $GEM5_SCRIPT "${args[@]}"
 
-python3 configs/class/parse_stats.py
+if [[ -z "${SKIP_PARSE_STATS:-}" ]]; then
+    python3 configs/class/parse_stats.py
+fi

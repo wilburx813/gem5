@@ -1,0 +1,661 @@
+#!/usr/bin/env python3
+"""Lightweight web UI for configuring and launching class_test_se simulations."""
+
+from __future__ import annotations
+
+import argparse
+import html
+import os
+import subprocess
+import sys
+import tempfile
+import textwrap
+import urllib.parse
+from collections import OrderedDict
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple
+
+
+CONFIG_DIR = Path(__file__).resolve().parent
+REPO_ROOT = CONFIG_DIR.parent.parent
+RUN_SCRIPT = REPO_ROOT / "configs" / "class" / "run.sh"
+DEFAULT_CONFIG = CONFIG_DIR / "config.yaml"
+PARSE_STATS = CONFIG_DIR / "parse_stats.py"
+DEFAULT_PORT = 8080
+
+
+class FieldSpec:
+    """Describe a form field and how it maps to the YAML config."""
+
+    def __init__(
+        self,
+        name: str,
+        label: str,
+        field_type: str,
+        section: str,
+        *,
+        options: Iterable[str] | None = None,
+        default: str | int | bool | None = None,
+        placeholder: str | None = None,
+        help_text: str | None = None,
+    ) -> None:
+        self.name = name
+        self.label = label
+        self.field_type = field_type
+        self.section = section
+        self.options = list(options or [])
+        self.default = default
+        self.placeholder = placeholder
+        self.help_text = help_text
+
+
+FIELD_SPECS: List[FieldSpec] = [
+    FieldSpec(
+        "cpu-type",
+        "CPU type",
+        "select",
+        "CPU",
+        options=["X86TimingSimpleCPU", "X86O3CPU", "X86AtomicSimpleCPU"],
+        default="X86TimingSimpleCPU",
+        help_text="Maps to --cpu-type",
+    ),
+    FieldSpec(
+        "num-cpus",
+        "CPU cores",
+        "number",
+        "CPU",
+        default=1,
+        help_text="Maps to --num-cpus",
+    ),
+    FieldSpec(
+        "sys-clock",
+        "System clock",
+        "text",
+        "CPU",
+        default="1GHz",
+        help_text="Maps to --sys-clock (e.g. 1GHz)",
+    ),
+    FieldSpec(
+        "cpu-clock",
+        "CPU clock",
+        "text",
+        "CPU",
+        default="2GHz",
+        help_text="Maps to --cpu-clock (e.g. 2GHz)",
+    ),
+    FieldSpec(
+        "mem-type",
+        "Memory type",
+        "text",
+        "Memory",
+        default="DDR4_2400_8x8",
+        help_text="Maps to --mem-type",
+    ),
+    FieldSpec(
+        "mem-size",
+        "Memory size",
+        "text",
+        "Memory",
+        default="2GB",
+        help_text="Maps to --mem-size (e.g. 2GB, 512MiB)",
+    ),
+    FieldSpec(
+        "mem-channels",
+        "Memory channels",
+        "number",
+        "Memory",
+        help_text="Optional --mem-channels override",
+    ),
+    FieldSpec(
+        "mem-channels-intlv",
+        "Memory channel interleave",
+        "number",
+        "Memory",
+        help_text="Optional --mem-channels-intlv",
+    ),
+    FieldSpec(
+        "mem-ranks",
+        "Memory ranks",
+        "number",
+        "Memory",
+        help_text="Optional --mem-ranks",
+    ),
+    FieldSpec(
+        "caches",
+        "Enable private L1 caches",
+        "checkbox",
+        "Cache",
+        default=True,
+        help_text="Maps to --caches",
+    ),
+    FieldSpec(
+        "l2cache",
+        "Enable shared L2 cache",
+        "checkbox",
+        "Cache",
+        default=True,
+        help_text="Maps to --l2cache",
+    ),
+    FieldSpec(
+        "l3cache",
+        "Enable shared L3 cache",
+        "checkbox",
+        "Cache",
+        default=False,
+        help_text="Maps to --l3cache",
+    ),
+    FieldSpec(
+        "l1d_size",
+        "L1D size",
+        "text",
+        "Cache",
+        placeholder="64KiB",
+        help_text="Optional --l1d_size",
+    ),
+    FieldSpec(
+        "l1i_size",
+        "L1I size",
+        "text",
+        "Cache",
+        placeholder="32KiB",
+        help_text="Optional --l1i_size",
+    ),
+    FieldSpec(
+        "l2_size",
+        "L2 size",
+        "text",
+        "Cache",
+        placeholder="1MiB",
+        help_text="Optional --l2_size",
+    ),
+    FieldSpec(
+        "l3_size",
+        "L3 size",
+        "text",
+        "Cache",
+        placeholder="32MiB",
+        help_text="Optional --l3_size",
+    ),
+    FieldSpec(
+        "cacheline_size",
+        "Cache line",
+        "number",
+        "Cache",
+        default=64,
+        help_text="Maps to --cacheline_size",
+    ),
+    FieldSpec(
+        "cmd",
+        "Command",
+        "text",
+        "Workload",
+        default="tests/test-progs/hello/bin/x86/linux/hello",
+        help_text="Binary to run; maps to --cmd",
+    ),
+    FieldSpec(
+        "options",
+        "Command arguments",
+        "text",
+        "Workload",
+        placeholder="e.g. 20000",
+        help_text="Optional --options string",
+    ),
+]
+
+
+SECTION_ORDER = ["CPU", "Memory", "Cache", "Workload"]
+CHECKBOX_NAMES = {spec.name for spec in FIELD_SPECS if spec.field_type == "checkbox"}
+
+
+def _load_default_values() -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    if DEFAULT_CONFIG.is_file():
+        for raw_line in DEFAULT_CONFIG.read_text().splitlines():
+            if ":" not in raw_line:
+                continue
+            key, _, value = raw_line.partition(":")
+            cleaned_key = key.strip()
+            if not cleaned_key or cleaned_key.startswith("#"):
+                continue
+            values[cleaned_key] = value.strip()
+    return values
+
+
+DEFAULT_VALUES = _load_default_values()
+
+
+def _coerce_checkbox(default: object) -> bool:
+    if isinstance(default, bool):
+        return default
+    if isinstance(default, str):
+        return default.lower() in {"true", "1", "yes", "on"}
+    if isinstance(default, (int, float)):
+        return bool(default)
+    return False
+
+
+def _ordered_config_from_form(form_values: Dict[str, str]) -> Tuple[OrderedDict[str, object], str]:
+    config = OrderedDict()
+    errors: List[str] = []
+
+    for spec in FIELD_SPECS:
+        raw_value = form_values.get(spec.name, "")
+        is_checkbox = spec.field_type == "checkbox"
+
+        if is_checkbox:
+            selected = raw_value.lower() in {"true", "on", "1", "yes"}
+            config[spec.name] = selected
+            continue
+
+        trimmed = raw_value.strip()
+        if not trimmed:
+            continue
+
+        if spec.field_type == "number":
+            try:
+                config[spec.name] = int(trimmed)
+            except ValueError:
+                errors.append(f"{spec.label} 需要是数字，但收到 {trimmed!r}")
+        else:
+            config[spec.name] = trimmed
+
+    if "cpu-type" not in config:
+        errors.append("CPU type 不能为空")
+    if "num-cpus" not in config:
+        errors.append("CPU cores 不能为空")
+    if "cmd" not in config:
+        errors.append("Command 不能为空")
+
+    extra_lines = form_values.get("extra_lines", "")
+
+    if errors:
+        raise ValueError("\n".join(errors))
+
+    return config, extra_lines
+
+
+def _config_to_yaml(config: OrderedDict[str, object], extra_lines: str) -> str:
+    lines: List[str] = []
+    for key, value in config.items():
+        if isinstance(value, bool):
+            yaml_value = "true" if value else "false"
+        else:
+            yaml_value = str(value)
+        lines.append(f"{key}: {yaml_value}")
+    extra = [line.rstrip() for line in extra_lines.splitlines() if line.strip()]
+    if extra:
+        lines.extend(extra)
+    return "\n".join(lines) + "\n"
+
+
+def _run_simulation(yaml_text: str) -> Tuple[int, str, str]:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".yaml",
+        dir=str(CONFIG_DIR),
+        delete=False,
+    ) as tmp:
+        tmp.write(yaml_text)
+        tmp_path = Path(tmp.name)
+
+    env = os.environ.copy()
+    env["SKIP_PARSE_STATS"] = "1"
+
+    try:
+        proc = subprocess.run(
+            ["bash", str(RUN_SCRIPT), str(tmp_path)],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    finally:
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _collect_stats() -> str:
+    if not (REPO_ROOT / "m5out" / "stats.txt").is_file():
+        return ""
+
+    proc = subprocess.run(
+        ["python3", str(PARSE_STATS)],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return proc.stderr or proc.stdout
+    return proc.stdout
+
+
+def _html_escape_pre(text: str) -> str:
+    return "<pre>" + html.escape(text) + "</pre>" if text.strip() else ""
+
+
+def _render_sections(form_values: Dict[str, str]) -> str:
+    sections_html: List[str] = []
+    for section in SECTION_ORDER:
+        specs = [spec for spec in FIELD_SPECS if spec.section == section]
+        if not specs:
+            continue
+
+        rows: List[str] = []
+        for spec in specs:
+            current_value = form_values.get(spec.name)
+            if current_value is None:
+                default_value = DEFAULT_VALUES.get(spec.name)
+                if spec.field_type == "checkbox":
+                    default_bool = (
+                        _coerce_checkbox(default_value)
+                        if default_value is not None
+                        else _coerce_checkbox(spec.default)
+                    )
+                    current_value = "true" if default_bool else ""
+                else:
+                    current_value = (
+                        default_value
+                        if default_value is not None
+                        else (str(spec.default) if spec.default is not None else "")
+                    )
+
+            rows.append(_render_field(spec, current_value or ""))
+
+        sections_html.append(
+            f"<fieldset><legend>{html.escape(section)}</legend>{''.join(rows)}</fieldset>"
+        )
+
+    return "\n".join(sections_html)
+
+
+def _render_field(spec: FieldSpec, value: str) -> str:
+    label = html.escape(spec.label)
+    help_text = (
+        f'<div class="help">{html.escape(spec.help_text)}</div>'
+        if spec.help_text
+        else ""
+    )
+
+    if spec.field_type == "select":
+        options_html = []
+        for opt in spec.options:
+            selected = " selected" if opt == value else ""
+            options_html.append(
+                f'<option value="{html.escape(opt)}"{selected}>{html.escape(opt)}</option>'
+            )
+        control = f'<select name="{html.escape(spec.name)}">{"".join(options_html)}</select>'
+    elif spec.field_type == "checkbox":
+        checked = " checked" if value.lower() in {"true", "on", "1", "yes"} else ""
+        control = (
+            f'<input type="checkbox" name="{html.escape(spec.name)}" value="true"{checked}>'
+        )
+    else:
+        placeholder = (
+            f' placeholder="{html.escape(spec.placeholder)}"'
+            if spec.placeholder
+            else ""
+        )
+        control = (
+            f'<input type="{html.escape(spec.field_type)}" '
+            f'name="{html.escape(spec.name)}" value="{html.escape(value)}"{placeholder}>'
+        )
+
+    return f'<label>{label}{help_text}{control}</label>'
+
+
+class ConfigUIHandler(BaseHTTPRequestHandler):
+    """Serve the configuration form and handle simulation runs."""
+
+    server_version = "Gem5ClassUI/1.0"
+
+    def do_GET(self) -> None:
+        content = self._render_page({}, "", "", "", "")
+        self._send_response(content)
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        raw_data = self.rfile.read(length).decode("utf-8")
+        parsed = urllib.parse.parse_qs(raw_data)
+
+        form_values = {
+            key: values[0] if values else ""
+            for key, values in parsed.items()
+        }
+
+        for checkbox in CHECKBOX_NAMES:
+            if checkbox not in form_values:
+                form_values[checkbox] = ""
+
+        yaml_text = ""
+        stdout = ""
+        stderr = ""
+        stats = ""
+        message = "仿真任务启动成功。"
+
+        try:
+            ordered_config, extra_lines = _ordered_config_from_form(form_values)
+            yaml_text = _config_to_yaml(ordered_config, extra_lines)
+            code, stdout, stderr = _run_simulation(yaml_text)
+            stats = _collect_stats() if code == 0 else ""
+            if code != 0:
+                message = f"仿真失败（退出码 {code}）。"
+        except Exception as exc:
+            message = f"表单处理失败: {exc}"
+
+        content = self._render_page(form_values, message, yaml_text, stdout, stats, stderr)
+        self._send_response(content)
+
+    def log_message(self, format: str, *args: object) -> None:
+        sys.stdout.write(
+            "%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), format % args)
+        )
+
+    def _send_response(self, html_body: str) -> None:
+        payload = html_body.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _render_page(
+        self,
+        form_values: Dict[str, str],
+        message: str,
+        yaml_text: str,
+        stdout: str,
+        stats: str,
+        stderr: str = "",
+    ) -> str:
+        sections_html = _render_sections(form_values)
+        yaml_block = _html_escape_pre(yaml_text)
+        stdout_block = _html_escape_pre(stdout)
+        stderr_block = _html_escape_pre(stderr)
+        stats_block = _html_escape_pre(stats)
+        extra_lines = html.escape(form_values.get("extra_lines", ""))
+
+        status_class = "status ok" if "失败" not in message else "status error"
+
+        return textwrap.dedent(
+            f"""\
+            <!DOCTYPE html>
+            <html lang="zh-CN">
+            <head>
+                <meta charset="utf-8">
+                <title>gem5 class webui</title>
+                <style>
+                    body {{
+                        font-family: sans-serif;
+                        margin: 0;
+                        padding: 0;
+                        background: #f3f4f6;
+                    }}
+                    header {{
+                        padding: 1rem 2rem;
+                        background: #111827;
+                        color: #fff;
+                    }}
+                    main {{
+                        padding: 1.5rem 2rem 3rem;
+                    }}
+                    form {{
+                        display: grid;
+                        gap: 1rem;
+                    }}
+                    fieldset {{
+                        border: 1px solid #d1d5db;
+                        border-radius: 0.5rem;
+                        padding: 1rem 1.5rem;
+                        background: #fff;
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                        gap: 0.8rem 1.2rem;
+                    }}
+                    legend {{
+                        font-weight: 600;
+                        padding: 0 0.5rem;
+                    }}
+                    label {{
+                        font-size: 0.95rem;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 0.25rem;
+                    }}
+                    label input,
+                    label select {{
+                        padding: 0.35rem 0.5rem;
+                        border-radius: 0.375rem;
+                        border: 1px solid #9ca3af;
+                        font-size: 0.95rem;
+                    }}
+                    label input[type="checkbox"] {{
+                        width: auto;
+                        align-self: flex-start;
+                    }}
+                    .help {{
+                        font-size: 0.75rem;
+                        color: #6b7280;
+                    }}
+                    textarea {{
+                        width: 100%;
+                        min-height: 6rem;
+                        border-radius: 0.375rem;
+                        border: 1px solid #9ca3af;
+                        padding: 0.5rem;
+                        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+                        font-size: 0.85rem;
+                    }}
+                    button {{
+                        justify-self: start;
+                        padding: 0.5rem 1rem;
+                        border-radius: 0.5rem;
+                        border: none;
+                        background: #2563eb;
+                        color: #fff;
+                        font-size: 1rem;
+                        cursor: pointer;
+                    }}
+                    button:hover {{
+                        background: #1d4ed8;
+                    }}
+                    .status {{
+                        padding: 0.75rem 1rem;
+                        border-radius: 0.5rem;
+                        font-weight: 500;
+                    }}
+                    .status.ok {{
+                        background: #dcfce7;
+                        color: #166534;
+                    }}
+                    .status.error {{
+                        background: #fee2e2;
+                        color: #991b1b;
+                    }}
+                    h2 {{
+                        margin-top: 2rem;
+                        font-size: 1.2rem;
+                    }}
+                    pre {{
+                        background: #111827;
+                        color: #f9fafb;
+                        padding: 1rem;
+                        border-radius: 0.5rem;
+                        overflow-x: auto;
+                        font-size: 0.85rem;
+                    }}
+                    .grid-two {{
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+                        gap: 1.2rem;
+                    }}
+                </style>
+            </head>
+            <body>
+                <header>
+                    <h1>gem5 class 简易 Web UI</h1>
+                    <p>配置 CPU / 内存参数并运行 <code>class_test_se.py</code></p>
+                </header>
+                <main>
+                    <div class="{status_class}">{html.escape(message)}</div>
+                    <form method="post">
+                        {sections_html}
+                        <label>
+                            附加 YAML 行
+                            <div class="help">直接追加到配置文件末尾，可添加少量自定义键值。</div>
+                            <textarea name="extra_lines" placeholder="例如：&#10;ruby: true">{extra_lines}</textarea>
+                        </label>
+                        <button type="submit">运行 gem5</button>
+                    </form>
+                    <section>
+                        <h2>生成的 YAML</h2>
+                        {yaml_block or "<p>提交后会展示生成的配置。</p>"}
+                    </section>
+                    <section class="grid-two">
+                        <div>
+                            <h2>gem5 输出</h2>
+                            {stdout_block or "<p>等待运行。</p>"}
+                        </div>
+                        <div>
+                            <h2>统计摘要</h2>
+                            {stats_block or "<p>暂无统计数据。</p>"}
+                        </div>
+                    </section>
+                    <section>
+                        <h2>stderr</h2>
+                        {stderr_block or "<p>stderr 为空。</p>"}
+                    </section>
+                </main>
+            </body>
+            </html>
+            """
+        )
+
+
+def serve(host: str, port: int) -> None:
+    server = ThreadingHTTPServer((host, port), ConfigUIHandler)
+    print(f"Serving on http://{host}:{port}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopping server…", flush=True)
+    finally:
+        server.server_close()
+
+
+def main(argv: List[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Simple web UI for configs/class flows")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Bind port (default: {DEFAULT_PORT})")
+    args = parser.parse_args(argv)
+
+    serve(args.host, args.port)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
