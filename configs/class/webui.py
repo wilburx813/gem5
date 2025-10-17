@@ -23,6 +23,34 @@ RUN_SCRIPT = REPO_ROOT / "configs" / "class" / "run.sh"
 DEFAULT_CONFIG = CONFIG_DIR / "config.yaml"
 PARSE_STATS = CONFIG_DIR / "parse_stats.py"
 DEFAULT_PORT = 8080
+COMMAND_DIR = REPO_ROOT / "tests" / "class" / "bin" / "x86"
+MEMORY_TYPE_CHOICES = [
+    "DDR3_1600_8x8",
+    "DDR3_2133_8x8",
+    "DDR4_2400_8x8",
+    "DDR4_2400_16x4",
+    "HBM_2000_4H_1x64",
+    "SimpleMemory",
+]
+
+
+def _discover_command_options() -> List[str]:
+    if not COMMAND_DIR.is_dir():
+        return []
+
+    options: List[str] = []
+    for entry in sorted(COMMAND_DIR.iterdir()):
+        if entry.is_file():
+            # Present binaries as repo-relative paths so run.sh can locate them.
+            options.append(str(entry.relative_to(REPO_ROOT)))
+    return options
+COMMAND_OPTIONS = _discover_command_options()
+COMMAND_FIELD_TYPE = "select" if COMMAND_OPTIONS else "text"
+DEFAULT_COMMAND = (
+    COMMAND_OPTIONS[0]
+    if COMMAND_OPTIONS
+    else "tests/test-progs/hello/bin/x86/linux/hello"
+)
 
 
 class FieldSpec:
@@ -87,9 +115,10 @@ FIELD_SPECS: List[FieldSpec] = [
     FieldSpec(
         "mem-type",
         "Memory type",
-        "text",
+        "select",
         "Memory",
         default="DDR4_2400_8x8",
+        options=MEMORY_TYPE_CHOICES,
         help_text="Maps to --mem-type",
     ),
     FieldSpec(
@@ -188,9 +217,10 @@ FIELD_SPECS: List[FieldSpec] = [
     FieldSpec(
         "cmd",
         "Command",
-        "text",
+        COMMAND_FIELD_TYPE,
         "Workload",
-        default="tests/test-progs/hello/bin/x86/linux/hello",
+        default=DEFAULT_COMMAND,
+        options=COMMAND_OPTIONS,
         help_text="Binary to run; maps to --cmd",
     ),
     FieldSpec(
@@ -256,16 +286,16 @@ def _ordered_config_from_form(form_values: Dict[str, str]) -> Tuple[OrderedDict[
             try:
                 config[spec.name] = int(trimmed)
             except ValueError:
-                errors.append(f"{spec.label} 需要是数字，但收到 {trimmed!r}")
+                errors.append(f"{spec.label} must be a number, received {trimmed!r}")
         else:
             config[spec.name] = trimmed
 
     if "cpu-type" not in config:
-        errors.append("CPU type 不能为空")
+        errors.append("CPU type is required")
     if "num-cpus" not in config:
-        errors.append("CPU cores 不能为空")
+        errors.append("CPU cores are required")
     if "cmd" not in config:
-        errors.append("Command 不能为空")
+        errors.append("Command is required")
 
     extra_lines = form_values.get("extra_lines", "")
 
@@ -290,19 +320,13 @@ def _config_to_yaml(config: OrderedDict[str, object], extra_lines: str) -> str:
 
 
 def _run_simulation(yaml_text: str) -> Tuple[int, str, str]:
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".yaml",
-        dir=str(CONFIG_DIR),
-        delete=False,
-    ) as tmp:
-        tmp.write(yaml_text)
-        tmp_path = Path(tmp.name)
+    with tempfile.TemporaryDirectory(prefix="gem5-class-") as tmpdir:
+        tmp_path = Path(tmpdir) / "config.yaml"
+        tmp_path.write_text(yaml_text)
 
-    env = os.environ.copy()
-    env["SKIP_PARSE_STATS"] = "1"
+        env = os.environ.copy()
+        env["SKIP_PARSE_STATS"] = "1"
 
-    try:
         proc = subprocess.run(
             ["bash", str(RUN_SCRIPT), str(tmp_path)],
             cwd=str(REPO_ROOT),
@@ -310,11 +334,6 @@ def _run_simulation(yaml_text: str) -> Tuple[int, str, str]:
             text=True,
             env=env,
         )
-    finally:
-        try:
-            tmp_path.unlink()
-        except FileNotFoundError:
-            pass
 
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -394,6 +413,24 @@ def _render_field(spec: FieldSpec, value: str) -> str:
         control = (
             f'<input type="checkbox" name="{html.escape(spec.name)}" value="true"{checked}>'
         )
+    elif spec.field_type == "datalist":
+        list_id = f"{spec.name}-list"
+        placeholder = (
+            f' placeholder="{html.escape(spec.placeholder)}"'
+            if spec.placeholder
+            else ""
+        )
+        option_values = []
+        seen = set()
+        for opt in spec.options + ([value] if value else []):
+            if opt and opt not in seen:
+                seen.add(opt)
+                option_values.append(f'<option value="{html.escape(opt)}"></option>')
+        control = (
+            f'<input type="text" name="{html.escape(spec.name)}" '
+            f'value="{html.escape(value)}" list="{html.escape(list_id)}"{placeholder}>'
+            f'<datalist id="{html.escape(list_id)}">{"".join(option_values)}</datalist>'
+        )
     else:
         placeholder = (
             f' placeholder="{html.escape(spec.placeholder)}"'
@@ -414,7 +451,13 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
     server_version = "Gem5ClassUI/1.0"
 
     def do_GET(self) -> None:
-        content = self._render_page({}, "", "", "", "")
+        content = self._render_page(
+            {},
+            "Ready to launch a simulation.",
+            "",
+            "",
+            "",
+        )
         self._send_response(content)
 
     def do_POST(self) -> None:
@@ -435,7 +478,8 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
         stdout = ""
         stderr = ""
         stats = ""
-        message = "仿真任务启动成功。"
+        message = "Simulation launched successfully."
+        is_error = False
 
         try:
             ordered_config, extra_lines = _ordered_config_from_form(form_values)
@@ -443,11 +487,13 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
             code, stdout, stderr = _run_simulation(yaml_text)
             stats = _collect_stats() if code == 0 else ""
             if code != 0:
-                message = f"仿真失败（退出码 {code}）。"
+                message = f"Simulation failed (exit code {code})."
+                is_error = True
         except Exception as exc:
-            message = f"表单处理失败: {exc}"
+            message = f"Form processing failed: {exc}"
+            is_error = True
 
-        content = self._render_page(form_values, message, yaml_text, stdout, stats, stderr)
+        content = self._render_page(form_values, message, yaml_text, stdout, stats, stderr, is_error)
         self._send_response(content)
 
     def log_message(self, format: str, *args: object) -> None:
@@ -471,6 +517,7 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
         stdout: str,
         stats: str,
         stderr: str = "",
+        is_error: bool = False,
     ) -> str:
         sections_html = _render_sections(form_values)
         yaml_block = _html_escape_pre(yaml_text)
@@ -479,12 +526,12 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
         stats_block = _html_escape_pre(stats)
         extra_lines = html.escape(form_values.get("extra_lines", ""))
 
-        status_class = "status ok" if "失败" not in message else "status error"
+        status_class = "status error" if is_error else "status ok"
 
         return textwrap.dedent(
             f"""\
             <!DOCTYPE html>
-            <html lang="zh-CN">
+            <html lang="en">
             <head>
                 <meta charset="utf-8">
                 <title>gem5 class webui</title>
@@ -567,6 +614,7 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                         padding: 0.75rem 1rem;
                         border-radius: 0.5rem;
                         font-weight: 500;
+                        transition: background 0.2s ease, color 0.2s ease;
                     }}
                     .status.ok {{
                         background: #dcfce7;
@@ -575,6 +623,10 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                     .status.error {{
                         background: #fee2e2;
                         color: #991b1b;
+                    }}
+                    .status.running {{
+                        background: #dbeafe;
+                        color: #1e3a8a;
                     }}
                     h2 {{
                         margin-top: 2rem;
@@ -597,39 +649,58 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
             </head>
             <body>
                 <header>
-                    <h1>gem5 class 简易 Web UI</h1>
-                    <p>配置 CPU / 内存参数并运行 <code>class_test_se.py</code></p>
+                    <h1>gem5 class Web UI</h1>
                 </header>
                 <main>
-                    <div class="{status_class}">{html.escape(message)}</div>
+                    <div class="{status_class}" id="status-msg">{html.escape(message)}</div>
                     <form method="post">
                         {sections_html}
                         <label>
-                            附加 YAML 行
-                            <div class="help">直接追加到配置文件末尾，可添加少量自定义键值。</div>
-                            <textarea name="extra_lines" placeholder="例如：&#10;ruby: true">{extra_lines}</textarea>
+                            Additional YAML lines
+                            <div class="help">Appended to the generated config; ideal for quick custom overrides.</div>
+                            <textarea name="extra_lines" placeholder="Example:&#10;ruby: true">{extra_lines}</textarea>
                         </label>
-                        <button type="submit">运行 gem5</button>
+                        <button type="submit">Run gem5</button>
                     </form>
                     <section>
-                        <h2>生成的 YAML</h2>
-                        {yaml_block or "<p>提交后会展示生成的配置。</p>"}
+                        <h2>Generated YAML</h2>
+                        {yaml_block or "<p>Submit the form to see the generated configuration.</p>"}
                     </section>
                     <section class="grid-two">
                         <div>
-                            <h2>gem5 输出</h2>
-                            {stdout_block or "<p>等待运行。</p>"}
+                            <h2>gem5 stdout</h2>
+                            {stdout_block or "<p>Awaiting run.</p>"}
                         </div>
                         <div>
-                            <h2>统计摘要</h2>
-                            {stats_block or "<p>暂无统计数据。</p>"}
+                            <h2>Stats summary</h2>
+                            {stats_block or "<p>No stats yet.</p>"}
                         </div>
                     </section>
                     <section>
                         <h2>stderr</h2>
-                        {stderr_block or "<p>stderr 为空。</p>"}
+                        {stderr_block or "<p>stderr is empty.</p>"}
                     </section>
                 </main>
+                <script>
+                    document.addEventListener("DOMContentLoaded", function () {{
+                        var form = document.querySelector("form");
+                        var statusBox = document.getElementById("status-msg");
+                        if (!form || !statusBox) {{
+                            return;
+                        }}
+                        form.addEventListener("submit", function () {{
+                            statusBox.textContent = "Simulation running…";
+                            statusBox.className = "status running";
+                            var submit = form.querySelector('button[type="submit"]');
+                            if (submit) {{
+                                submit.disabled = true;
+                                submit.textContent = "Running…";
+                                submit.style.opacity = "0.7";
+                                submit.style.cursor = "wait";
+                            }}
+                        }});
+                    }});
+                </script>
             </body>
             </html>
             """

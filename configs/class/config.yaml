@@ -4,4 +4,4 @@ mem-type: DDR4_2400_8x8
 mem-size: 2GB
 caches: true
 l2cache: true
-cmd: tests/test-progs/hello/bin/x86/linux/hello
+cmd: tests/class/bin/x86/class_hello
