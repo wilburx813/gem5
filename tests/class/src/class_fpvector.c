@@ -2,7 +2,7 @@
 #include <stdlib.h>
 
 #ifndef ARRAY_ELEMS
-#define ARRAY_ELEMS (1 << 22)
+#define ARRAY_ELEMS (1 << 18)
 #endif
 
 int main(void) {

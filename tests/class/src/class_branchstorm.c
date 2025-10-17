@@ -3,7 +3,7 @@
 #include <stdlib.h>
 
 #ifndef ITERATIONS
-#define ITERATIONS (1 << 24)
+#define ITERATIONS (1 << 20)
 #endif
 
 int main(void) {

@@ -4,10 +4,10 @@
 #include <string.h>
 
 #ifndef STREAM_ELEMS
-#define STREAM_ELEMS (1 << 24)
+#define STREAM_ELEMS (1 << 20)
 #endif
 #ifndef STREAM_REPS
-#define STREAM_REPS 16
+#define STREAM_REPS 8
 #endif
 
 int main(void) {

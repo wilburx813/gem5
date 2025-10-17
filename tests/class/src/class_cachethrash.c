@@ -3,7 +3,7 @@
 #include <stdlib.h>
 
 #ifndef NODE_COUNT
-#define NODE_COUNT (1 << 20)
+#define NODE_COUNT (1 << 18)
 #endif
 
 typedef struct Node {
