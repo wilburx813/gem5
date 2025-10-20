@@ -1,7 +1,10 @@
 cpu-type: X86TimingSimpleCPU
 num-cpus: 1
-mem-type: DDR4_2400_8x8
-mem-size: 2GB
+mem-type: DDR3_1600_8x8
+mem-size: 512MiB
 caches: true
 l2cache: true
 cmd: tests/class/bin/x86/class_hello
+l1d_size: 16KiB
+l1i_size: 16KiB
+l2_size: 256KiB

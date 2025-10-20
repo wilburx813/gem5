@@ -10,11 +10,44 @@ GEM5_BIN="./build/X86/gem5.opt"
 GEM5_SCRIPT="configs/class/class_test_se.py"
 
 args=()
+param_args=()
 
-while IFS=":" read -r key value; do
-    key=$(echo "$key" | xargs)
-    value=$(echo "$value" | xargs)
-    if [[ -z "$key" || "$key" =~ ^# ]]; then
+trim() {
+    local s="$1"
+    # 删除开头空白
+    s="${s#"${s%%[![:space:]]*}"}"
+    # 删除结尾空白
+    s="${s%"${s##*[![:space:]]}"}"
+    printf "%s" "$s"
+}
+
+while IFS= read -r line || [[ -n "$line" ]]; do
+    # 去掉首尾空白
+    line=$(trim "$line")
+    # 跳过空行和注释
+    if [[ -z "$line" || "${line:0:1}" == "#" ]]; then
+        continue
+    fi
+
+    if [[ "$line" != *:* ]]; then
+        echo "Warning: 忽略无法解析的配置行: $line" >&2
+        continue
+    fi
+
+    key="${line%%:*}"
+    value="${line#*:}"
+    key=$(trim "$key")
+    value=$(trim "$value")
+
+    if [[ -z "$key" ]]; then
+        continue
+    fi
+
+    # 支持 param_* 键，将其转成 --param
+    if [[ "$key" =~ ^param ]]; then
+        if [[ -n "$value" ]]; then
+            param_args+=("$value")
+        fi
         continue
     fi
 
@@ -23,9 +56,18 @@ while IFS=":" read -r key value; do
         continue
     fi
 
-    if [[ "$value" == "true" ]]; then
+    # 移除行尾注释
+    value_no_comment="${value%%#*}"
+    value=$(trim "$value_no_comment")
+
+    if [[ -z "$value" ]]; then
+        continue
+    fi
+
+    value_lower=$(printf "%s" "$value" | tr "[:upper:]" "[:lower:]")
+    if [[ "$value_lower" == "true" ]]; then
         args+=(--"$key")
-    elif [[ "$value" == "false" || -z "$value" ]]; then
+    elif [[ "$value_lower" == "false" ]]; then
         continue
     else
         args+=(--"$key" "$value")
@@ -36,6 +78,11 @@ done < "$YAML_FILE"
 if [[ -n "$OVERRIDE_CMD" ]]; then
     args+=(--cmd "$OVERRIDE_CMD")
 fi
+
+# 附加 --param 覆盖
+for p in "${param_args[@]}"; do
+    args+=(--param "$p")
+done
 
 echo "$GEM5_BIN $GEM5_SCRIPT ${args[*]}"
 # exec $GEM5_BIN $GEM5_SCRIPT "${args[@]}"

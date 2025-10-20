@@ -32,6 +32,29 @@ MEMORY_TYPE_CHOICES = [
     "HBM_2000_4H_1x64",
     "SimpleMemory",
 ]
+REPLACEMENT_POLICY_SUGGESTIONS = [
+    "LRURP()",
+    "RandomRP()",
+    "FIFORP()",
+    "TreePLRURP()",
+    "MRURP()",
+    "LFURP()",
+    "BRRIPRP()",
+    "SecondChanceRP()",
+]
+BOOL_SELECT_OPTIONS = ["inherit", "true", "false"]
+CACHE_PARAM_HELP = (
+    "One override per line; each becomes a gem5 --param. "
+    "Example: system.cpu[0:4].dcache.writeback_clean=true to alter the write policy."
+)
+ASSOC_KEYS = ["l1d_assoc", "l1i_assoc", "l2_assoc", "l3_assoc"]
+# field_name -> (level, attribute, value_kind)
+# level: l1d/l1i/l2/l3, attribute: BaseCache param, value_kind: 'bool' or 'string'
+CACHE_PARAM_FIELDS = {
+    "cache_replacement": ("all", "replacement_policy", "string"),
+    "cache_is_read_only": ("all", "is_read_only", "bool"),
+    "cache_writeback_clean": ("all", "writeback_clean", "bool"),
+}
 
 
 def _discover_command_options() -> List[str]:
@@ -117,7 +140,7 @@ FIELD_SPECS: List[FieldSpec] = [
         "Memory type",
         "select",
         "Memory",
-        default="DDR4_2400_8x8",
+        default="DDR3_1600_8x8",
         options=MEMORY_TYPE_CHOICES,
         help_text="Maps to --mem-type",
     ),
@@ -126,7 +149,7 @@ FIELD_SPECS: List[FieldSpec] = [
         "Memory size",
         "text",
         "Memory",
-        default="2GB",
+        default="512MiB",
         help_text="Maps to --mem-size (e.g. 2GB, 512MiB)",
     ),
     FieldSpec(
@@ -207,12 +230,79 @@ FIELD_SPECS: List[FieldSpec] = [
         help_text="Optional --l3_size",
     ),
     FieldSpec(
+        "num-dirs",
+        "Directory controllers",
+        "number",
+        "Cache",
+        placeholder="1",
+        help_text="Optional --num-dirs",
+    ),
+    FieldSpec(
+        "num-l2caches",
+        "L2 cache tiles",
+        "number",
+        "Cache",
+        placeholder="1",
+        help_text="Optional --num-l2caches",
+    ),
+    FieldSpec(
+        "num-l3caches",
+        "L3 cache tiles",
+        "number",
+        "Cache",
+        placeholder="1",
+        help_text="Optional --num-l3caches",
+    ),
+    FieldSpec(
         "cacheline_size",
         "Cache line",
         "number",
         "Cache",
         default=64,
         help_text="Maps to --cacheline_size",
+    ),
+    FieldSpec(
+        "cache_assoc",
+        "Cache associativity (ways)",
+        "number",
+        "Cache",
+        placeholder="4",
+        help_text="Applies the same associativity to L1/L2/L3 caches",
+    ),
+    FieldSpec(
+        "cache_replacement",
+        "Cache replacement policy",
+        "datalist",
+        "Cache",
+        options=REPLACEMENT_POLICY_SUGGESTIONS,
+        placeholder="LRURP()",
+        help_text="Applies to all configured caches via gem5 --param",
+    ),
+    FieldSpec(
+        "cache_is_read_only",
+        "Cache read-only",
+        "select",
+        "Cache",
+        options=BOOL_SELECT_OPTIONS,
+        default="inherit",
+        help_text="Set is_read_only for every cache level (inherit keeps defaults)",
+    ),
+    FieldSpec(
+        "cache_writeback_clean",
+        "Cache writeback clean",
+        "select",
+        "Cache",
+        options=BOOL_SELECT_OPTIONS,
+        default="inherit",
+        help_text="Set writeback_clean for every cache level",
+    ),
+    FieldSpec(
+        "cache_param_overrides",
+        "Cache parameter overrides",
+        "textarea",
+        "Cache",
+        placeholder="system.cpu[0:4].dcache.writeback_clean=true\nsystem.l2.write_buffers=16",
+        help_text=CACHE_PARAM_HELP,
     ),
     FieldSpec(
         "cmd",
@@ -265,9 +355,14 @@ def _coerce_checkbox(default: object) -> bool:
     return False
 
 
-def _ordered_config_from_form(form_values: Dict[str, str]) -> Tuple[OrderedDict[str, object], str]:
+def _ordered_config_from_form(
+    form_values: Dict[str, str]
+) -> Tuple[OrderedDict[str, object], List[str], str]:
     config = OrderedDict()
     errors: List[str] = []
+    param_lines: List[str] = []
+    cache_param_inputs: Dict[str, object] = {}
+    global_assoc_value: int | None = None
 
     for spec in FIELD_SPECS:
         raw_value = form_values.get(spec.name, "")
@@ -275,11 +370,43 @@ def _ordered_config_from_form(form_values: Dict[str, str]) -> Tuple[OrderedDict[
 
         if is_checkbox:
             selected = raw_value.lower() in {"true", "on", "1", "yes"}
+            if spec.name in CACHE_PARAM_FIELDS:
+                cache_param_inputs[spec.name] = selected
+                continue
             config[spec.name] = selected
             continue
 
         trimmed = raw_value.strip()
+
+        if spec.field_type == "textarea":
+            if spec.name == "cache_param_overrides":
+                if trimmed:
+                    for line in trimmed.splitlines():
+                        candidate = line.strip()
+                        if not candidate or candidate.startswith("#"):
+                            continue
+                        param_lines.append(candidate)
+                continue
+
+            if trimmed:
+                config[spec.name] = trimmed
+            continue
+
         if not trimmed:
+            continue
+
+        if spec.name in CACHE_PARAM_FIELDS:
+            # Treat "inherit" as skipping for select helpers
+            if spec.field_type == "select" and trimmed.lower() == "inherit":
+                continue
+            cache_param_inputs[spec.name] = trimmed
+            continue
+
+        if spec.name == "cache_assoc":
+            try:
+                global_assoc_value = int(trimmed)
+            except ValueError:
+                errors.append(f"{spec.label} must be a number, received {trimmed!r}")
             continue
 
         if spec.field_type == "number":
@@ -302,10 +429,18 @@ def _ordered_config_from_form(form_values: Dict[str, str]) -> Tuple[OrderedDict[
     if errors:
         raise ValueError("\n".join(errors))
 
-    return config, extra_lines
+    if global_assoc_value is not None:
+        for assoc_key in ASSOC_KEYS:
+            config[assoc_key] = global_assoc_value
+
+    param_lines.extend(_generate_cache_param_lines(config, cache_param_inputs))
+
+    return config, param_lines, extra_lines
 
 
-def _config_to_yaml(config: OrderedDict[str, object], extra_lines: str) -> str:
+def _config_to_yaml(
+    config: OrderedDict[str, object], param_lines: List[str], extra_lines: str
+) -> str:
     lines: List[str] = []
     for key, value in config.items():
         if isinstance(value, bool):
@@ -313,10 +448,68 @@ def _config_to_yaml(config: OrderedDict[str, object], extra_lines: str) -> str:
         else:
             yaml_value = str(value)
         lines.append(f"{key}: {yaml_value}")
+    for idx, param_line in enumerate(param_lines):
+        lines.append(f"param_cache_{idx}: {param_line}")
     extra = [line.rstrip() for line in extra_lines.splitlines() if line.strip()]
     if extra:
         lines.extend(extra)
     return "\n".join(lines) + "\n"
+
+
+def _normalize_bool_param_value(raw_value: object) -> str | None:
+    if isinstance(raw_value, bool):
+        return "true" if raw_value else "false"
+    text = str(raw_value).strip().lower()
+    if text in {"", "inherit"}:
+        return None
+    if text in {"true", "1", "yes", "on"}:
+        return "true"
+    if text in {"false", "0", "no", "off"}:
+        return "false"
+    return None
+
+
+def _generate_cache_param_lines(
+    config: Dict[str, object], cache_inputs: Dict[str, object]
+) -> List[str]:
+    if not cache_inputs:
+        return []
+
+    num_cpus = int(config.get("num-cpus", 0) or 0)
+    caches_enabled = bool(config.get("caches", False))
+    l2_enabled = bool(config.get("l2cache", False))
+    l3_enabled = bool(config.get("l3cache", False))
+
+    lines: List[str] = []
+
+    for field_name, raw_value in cache_inputs.items():
+        level, attribute, value_kind = CACHE_PARAM_FIELDS[field_name]
+
+        if value_kind == "bool":
+            normalized = _normalize_bool_param_value(raw_value)
+            if normalized is None:
+                continue
+            value = normalized
+        else:
+            value = str(raw_value).strip()
+            if not value:
+                continue
+
+        if level == "all":
+            if caches_enabled and num_cpus > 0:
+                for cpu_idx in range(num_cpus):
+                    lines.append(
+                        f"system.cpu[{cpu_idx}].dcache.{attribute}={value}"
+                    )
+                    lines.append(
+                        f"system.cpu[{cpu_idx}].icache.{attribute}={value}"
+                    )
+            if l2_enabled:
+                lines.append(f"system.l2.{attribute}={value}")
+            if l3_enabled:
+                lines.append(f"system.l3.{attribute}={value}")
+
+    return lines
 
 
 def _run_simulation(yaml_text: str) -> Tuple[int, str, str]:
@@ -413,6 +606,16 @@ def _render_field(spec: FieldSpec, value: str) -> str:
         control = (
             f'<input type="checkbox" name="{html.escape(spec.name)}" value="true"{checked}>'
         )
+    elif spec.field_type == "textarea":
+        placeholder = (
+            f' placeholder="{html.escape(spec.placeholder)}"'
+            if spec.placeholder
+            else ""
+        )
+        control = (
+            f'<textarea name="{html.escape(spec.name)}"{placeholder}>'
+            f"{html.escape(value)}</textarea>"
+        )
     elif spec.field_type == "datalist":
         list_id = f"{spec.name}-list"
         placeholder = (
@@ -482,8 +685,8 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
         is_error = False
 
         try:
-            ordered_config, extra_lines = _ordered_config_from_form(form_values)
-            yaml_text = _config_to_yaml(ordered_config, extra_lines)
+            ordered_config, param_lines, extra_lines = _ordered_config_from_form(form_values)
+            yaml_text = _config_to_yaml(ordered_config, param_lines, extra_lines)
             code, stdout, stderr = _run_simulation(yaml_text)
             stats = _collect_stats() if code == 0 else ""
             if code != 0:
