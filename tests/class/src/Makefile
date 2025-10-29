@@ -2,7 +2,7 @@ CC ?= gcc
 CFLAGS ?= -O2 -static
 
 BIN_DIR := ../bin/x86
-PROGS := class_hello class_memsum class_cachethrash class_branchstorm class_matrixmul class_streamcopy class_fpvector
+PROGS := class_hello class_memsum class_cachethrash class_branchstorm class_matrixmul class_streamcopy class_fpvector class_matrixmul_smallsize
 
 all: $(PROGS:%=$(BIN_DIR)/%)
 

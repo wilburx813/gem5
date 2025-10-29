@@ -38,5 +38,9 @@ typings
 .DS_Store
 pic
 ppt
-/home/wilburx/gem5/configs/class/results
-/home/wilburx/gem5/configs/class/cache_assoc_experiment.py
+/configs/class/results
+/configs/class/cache_assoc_experiment.py
+/prebuilt/
+/prebuilt-gem5-X86.tar.gz
+# Ignore test binaries
+/tests/**/bin/

@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 #ifndef MAT_N
-#define MAT_N 256
+#define MAT_N 64
 #endif
 
 static void fill_matrix(double *m, size_t n) {
