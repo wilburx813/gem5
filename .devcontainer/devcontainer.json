@@ -2,9 +2,9 @@
     "name": "gem5 Development Container",
     "image": "ghcr.io/gem5/devcontainer:latest",
     "hostRequirements": {
-        "cpus": 8,
-        "memory": "16gb",
-        "storage": "32gb"
+        "cpus": 2,
+        "memory": "4gb",
+        "storage": "16gb"
      },
     "customizations": {
         "vscode": {
@@ -28,7 +28,6 @@
         }
     },
     "features": {
-        "ghcr.io/devcontainers/features/docker-in-docker:2": {},
         "ghcr.io/devcontainers/features/github-cli:1": {},
         "ghcr.io/devcontainers-contrib/features/actionlint:1": {},
         "ghcr.io/devcontainers-contrib/features/vscode-cli:1": {}
