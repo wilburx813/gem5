@@ -39,3 +39,20 @@ git update-index
 
 # Install the pre-commit checks.
 ./util/pre-commit-install.sh
+
+url="https://github.com/wilburx813/gem5/releases/download/0.1/prebuilt-gem5-X86.tar.gz"
+tgz="prebuilt-gem5-X86.tar.gz"
+
+if [ ! -f "$tgz" ]; then
+    if command -v wget >/dev/null 2>&1; then
+        wget -q "$url"
+    elif command -v curl >/dev/null 2>&1; then
+        curl -sSL -O "$url"
+    else
+        echo "Neither wget nor curl found; skipping download" >&2
+    fi
+fi
+
+if [ -f "$tgz" ]; then
+    tar -xzf "$tgz"
+fi
