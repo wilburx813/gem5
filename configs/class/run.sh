@@ -84,6 +84,16 @@ for p in "${param_args[@]}"; do
     args+=(--param "$p")
 done
 
+# 选择 gem5 可执行：优先使用构建产物，找不到则回退到预编译路径
+if [[ ! -x "$GEM5_BIN" ]]; then
+    if [[ -x "gem5-X86/bin/gem5.opt" ]]; then
+        GEM5_BIN="gem5-X86/bin/gem5.opt"
+    else
+        echo "[error] 未找到 gem5 可执行文件：./build/X86/gem5.opt 或 gem5-X86/bin/gem5.opt" >&2
+        exit 1
+    fi
+fi
+
 echo "$GEM5_BIN $GEM5_SCRIPT ${args[*]}"
 # exec $GEM5_BIN $GEM5_SCRIPT "${args[@]}"
 $GEM5_BIN $GEM5_SCRIPT "${args[@]}"
