@@ -45,6 +45,7 @@ from common.Caches import *
 
 import m5
 from m5.objects import *
+from m5.util import fatal
 
 from gem5.isas import ISA
 
@@ -79,6 +80,19 @@ def config_cache(options, system):
     if options.external_memory_system and (options.caches or options.l2cache):
         print("External caches and internal caches are exclusive options.\n")
         sys.exit(1)
+
+    rp_cls = None
+    if getattr(options, "cache_replacement", None):
+        rp_cls = ObjectList.rp_list.get(options.cache_replacement)
+        if rp_cls is None:
+            fatal(
+                f"Unknown replacement policy '{options.cache_replacement}'. "
+                "Run with --list-rp-types to see available options."
+            )
+
+    def apply_replacement_policy(cache_obj):
+        if rp_cls is not None and cache_obj is not None:
+            cache_obj.replacement_policy = rp_cls()
 
     if options.external_memory_system:
         ExternalCache = ExternalCacheFactory(options.external_memory_system)
@@ -134,6 +148,7 @@ def config_cache(options, system):
         system.l2 = l2_cache_class(
             clk_domain=system.cpu_clk_domain, **_get_cache_opts("l2", options)
         )
+        apply_replacement_policy(system.l2)
 
         system.tol2bus = L2XBar(clk_domain=system.cpu_clk_domain)
         system.l2.cpu_side = system.tol2bus.mem_side_ports
@@ -146,6 +161,8 @@ def config_cache(options, system):
         if options.caches:
             icache = icache_class(**_get_cache_opts("l1i", options))
             dcache = dcache_class(**_get_cache_opts("l1d", options))
+            apply_replacement_policy(icache)
+            apply_replacement_policy(dcache)
 
             # If we are using ISA.X86 or ISA.RISCV, we set walker caches.
             if ObjectList.cpu_list.get_isa(options.cpu_type) in [

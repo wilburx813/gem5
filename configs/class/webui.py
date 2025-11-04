@@ -33,14 +33,14 @@ MEMORY_TYPE_CHOICES = [
     "SimpleMemory",
 ]
 REPLACEMENT_POLICY_SUGGESTIONS = [
-    "LRURP()",
-    "RandomRP()",
-    "FIFORP()",
-    "TreePLRURP()",
-    "MRURP()",
-    "LFURP()",
-    "BRRIPRP()",
-    "SecondChanceRP()",
+    "LRURP",
+    "RandomRP",
+    "FIFORP",
+    "TreePLRURP",
+    "MRURP",
+    "LFURP",
+    "BRRIPRP",
+    "SecondChanceRP",
 ]
 BOOL_SELECT_OPTIONS = ["inherit", "true", "false"]
 CACHE_PARAM_HELP = (
@@ -51,7 +51,6 @@ ASSOC_KEYS = ["l1d_assoc", "l1i_assoc", "l2_assoc", "l3_assoc"]
 # field_name -> (level, attribute, value_kind)
 # level: l1d/l1i/l2/l3, attribute: BaseCache param, value_kind: 'bool' or 'string'
 CACHE_PARAM_FIELDS = {
-    "cache_replacement": ("all", "replacement_policy", "string"),
     "cache_is_read_only": ("all", "is_read_only", "bool"),
     "cache_writeback_clean": ("all", "writeback_clean", "bool"),
 }
@@ -275,8 +274,8 @@ FIELD_SPECS: List[FieldSpec] = [
         "datalist",
         "Cache",
         options=REPLACEMENT_POLICY_SUGGESTIONS,
-        placeholder="LRURP()",
-        help_text="Applies to all configured caches via gem5 --param",
+        placeholder="LRURP",
+        help_text="Applies to all configured caches via --cache_replacement",
     ),
     FieldSpec(
         "cache_is_read_only",
@@ -378,6 +377,12 @@ def _ordered_config_from_form(
 
         trimmed = raw_value.strip()
 
+        if spec.name == "cache_replacement":
+            sanitized = _sanitize_replacement_policy(trimmed)
+            if sanitized:
+                config[spec.name] = sanitized
+            continue
+
         if spec.field_type == "textarea":
             if spec.name == "cache_param_overrides":
                 if trimmed:
@@ -467,6 +472,19 @@ def _normalize_bool_param_value(raw_value: object) -> str | None:
     if text in {"false", "0", "no", "off"}:
         return "false"
     return None
+
+
+def _sanitize_replacement_policy(raw_value: object) -> str:
+    text = str(raw_value).strip()
+    if not text:
+        return ""
+    if text.endswith("()"):
+        text = text[:-2]
+    if "__import__(" in text:
+        text = text.split(".")[-1]
+    elif "." in text:
+        text = text.rsplit(".", 1)[-1]
+    return text
 
 
 def _generate_cache_param_lines(
