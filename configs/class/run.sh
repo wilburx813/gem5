@@ -11,6 +11,24 @@ GEM5_SCRIPT="configs/class/class_test_se.py"
 
 args=()
 param_args=()
+cache_assoc_value=""
+cache_is_read_only_value=""
+cache_writeback_clean_value=""
+num_cpus_value=""
+caches_enabled=""
+l2cache_enabled=""
+
+normalise_bool() {
+    local raw="${1:-}"
+    local lowered
+    lowered=$(printf "%s" "$raw" | tr "[:upper:]" "[:lower:]")
+    case "$lowered" in
+        ""|"inherit") return 1 ;;
+        "true"|"1"|"yes"|"on") printf "%s" "True" ;;
+        "false"|"0"|"no"|"off") printf "%s" "False" ;;
+        *) return 1 ;;
+    esac
+}
 
 trim() {
     local s="$1"
@@ -43,6 +61,21 @@ while IFS= read -r line || [[ -n "$line" ]]; do
         continue
     fi
 
+    if [[ "$key" == "cache_assoc" ]]; then
+        cache_assoc_value="$value"
+        continue
+    fi
+
+    if [[ "$key" == "cache_is_read_only" ]]; then
+        cache_is_read_only_value="$value"
+        continue
+    fi
+
+    if [[ "$key" == "cache_writeback_clean" ]]; then
+        cache_writeback_clean_value="$value"
+        continue
+    fi
+
     # 支持 param_* 键，将其转成 --param
     if [[ "$key" =~ ^param ]]; then
         if [[ -n "$value" ]]; then
@@ -65,6 +98,18 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     fi
 
     value_lower=$(printf "%s" "$value" | tr "[:upper:]" "[:lower:]")
+    if [[ "$key" == "num-cpus" ]]; then
+        num_cpus_value="$value"
+    elif [[ "$key" == "caches" ]]; then
+        caches_enabled="$value_lower"
+    elif [[ "$key" == "l2cache" ]]; then
+        l2cache_enabled="$value_lower"
+    fi
+
+    if [[ "$key" == "l3cache" ]]; then
+        continue
+    fi
+
     if [[ "$value_lower" == "true" ]]; then
         args+=(--"$key")
     elif [[ "$value_lower" == "false" ]]; then
@@ -77,6 +122,44 @@ done < "$YAML_FILE"
 # 如果指定了覆盖 cmd，就加在最后
 if [[ -n "$OVERRIDE_CMD" ]]; then
     args+=(--cmd "$OVERRIDE_CMD")
+fi
+
+if [[ -n "$cache_assoc_value" ]]; then
+    if [[ "$caches_enabled" == "true" ]]; then
+        args+=(--l1d_assoc "$cache_assoc_value" --l1i_assoc "$cache_assoc_value")
+    fi
+    if [[ "$l2cache_enabled" == "true" ]]; then
+        args+=(--l2_assoc "$cache_assoc_value")
+    fi
+fi
+
+if [[ -z "$num_cpus_value" ]]; then
+    num_cpus_value="1"
+fi
+
+bool_value=""
+if bool_value=$(normalise_bool "$cache_is_read_only_value"); then
+    if [[ "$caches_enabled" == "true" ]]; then
+        for ((i = 0; i < num_cpus_value; i++)); do
+            param_args+=("system.cpu[$i].dcache.is_read_only=$bool_value")
+            param_args+=("system.cpu[$i].icache.is_read_only=$bool_value")
+        done
+    fi
+    if [[ "$l2cache_enabled" == "true" ]]; then
+        param_args+=("system.l2.is_read_only=$bool_value")
+    fi
+fi
+
+if bool_value=$(normalise_bool "$cache_writeback_clean_value"); then
+    if [[ "$caches_enabled" == "true" ]]; then
+        for ((i = 0; i < num_cpus_value; i++)); do
+            param_args+=("system.cpu[$i].dcache.writeback_clean=$bool_value")
+            param_args+=("system.cpu[$i].icache.writeback_clean=$bool_value")
+        done
+    fi
+    if [[ "$l2cache_enabled" == "true" ]]; then
+        param_args+=("system.l2.writeback_clean=$bool_value")
+    fi
 fi
 
 # 附加 --param 覆盖

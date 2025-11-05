@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import re
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Tuple, Union
+from typing import Dict, Iterable, Optional, Tuple, Union, List
 
 Number = Union[int, float]
 
@@ -36,6 +36,22 @@ L2_METRICS = (
     ("overallAccesses::total", "Accesses", False),
     ("overallMisses::total", "Misses", False),
     ("overallMissRate::total", "Miss rate", True),
+)
+
+L2_EXTRA_METRICS = (
+    ("writebacks", "Writebacks"),
+)
+
+MEMORY_CONTROLLER_PRIMARY = (
+    ("dram__num_reads::total", "DRAM read requests", None),
+    ("dram__num_writes::total", "DRAM write requests", None),
+    ("dram__bytes_read::total", "DRAM bytes read", "B"),
+    ("dram__bytes_written::total", "DRAM bytes written", "B"),
+)
+
+MEMORY_CONTROLLER_LATENCY = (
+    ("dram__avg_mem_access_latency", "Avg mem access latency"),
+    ("dram__avg_queueing_latency", "Avg queue delay"),
 )
 
 
@@ -92,6 +108,19 @@ def format_value(value: Optional[Number], unit: Optional[str], ratio: bool) -> s
     return formatted
 
 
+def calculate_mpki(misses: Optional[Number], instructions: Optional[Number]) -> Optional[float]:
+    if misses is None or instructions is None:
+        return None
+    try:
+        misses_f = float(misses)
+        inst_f = float(instructions)
+    except (TypeError, ValueError):
+        return None
+    if inst_f <= 0:
+        return None
+    return (misses_f * 1000.0) / inst_f
+
+
 def collect_cpu_ids(stats: Dict[str, str]) -> Iterable[Optional[int]]:
     cpu_regex = re.compile(r"^system\.cpu(\d+)\.")
     cpu_ids = sorted({int(match.group(1)) for key in stats for match in [cpu_regex.match(key)] if match})
@@ -110,26 +139,102 @@ def extract(metrics: Iterable[Tuple[str, str, Optional[str], bool]], prefix: str
         yield label, format_value(value, unit, ratio)
 
 
-def collect_cache_metrics(cache_name: str, cache_label: str, cpu_prefix: str, stats: Dict[str, str]) -> Iterable[Tuple[str, str]]:
+def collect_cache_metrics(
+    cache_name: str,
+    cache_label: str,
+    cpu_prefix: str,
+    stats: Dict[str, str],
+    instructions: Optional[Number],
+) -> Iterable[Tuple[str, str]]:
     base = f"{cpu_prefix}{cache_name}."
-    keys = {
-        "Accesses": f"{base}overallAccesses::total",
-        "Misses": f"{base}overallMisses::total",
-        "Miss rate": f"{base}overallMissRate::total",
-    }
-    for label, key in keys.items():
+    misses_value: Optional[Number] = None
+
+    metrics = [
+        ("overallAccesses::total", "Accesses", False),
+        ("overallMisses::total", "Misses", False),
+        ("overallMissRate::total", "Miss rate", True),
+        ("writebacks", "Writebacks", False),
+    ]
+
+    for suffix, label, ratio in metrics:
+        key = f"{base}{suffix}"
         raw = stats.get(key)
         value = normalise_number(raw) if raw is not None else None
-        yield f"{cache_label} {label}", format_value(value, None, label == "Miss rate")
+        if suffix == "overallMisses::total":
+            misses_value = value
+        if value is None:
+            continue
+        yield f"{cache_label} {label}", format_value(value, None, ratio)
+
+    mpki = calculate_mpki(misses_value, instructions)
+    if mpki is not None:
+        yield f"{cache_label} MPKI", format_value(mpki, None, False)
 
 
-def collect_l2(stats: Dict[str, str]) -> Iterable[Tuple[str, str]]:
+def collect_l2(stats: Dict[str, str], instructions: Optional[Number]) -> Iterable[Tuple[str, str]]:
     prefix = "system.l2."
+    misses_value: Optional[Number] = None
     for suffix, label, ratio in L2_METRICS:
         key = f"{prefix}{suffix}"
         raw = stats.get(key)
         value = normalise_number(raw) if raw is not None else None
+        if suffix == "overallMisses::total":
+            misses_value = value
+        if value is None:
+            continue
         yield f"L2 {label}", format_value(value, None, ratio)
+
+    for suffix, label in L2_EXTRA_METRICS:
+        key = f"{prefix}{suffix}"
+        raw = stats.get(key)
+        value = normalise_number(raw) if raw is not None else None
+        if value is None:
+            continue
+        yield f"L2 {label}", format_value(value, None, False)
+
+    mpki = calculate_mpki(misses_value, instructions)
+    if mpki is not None:
+        yield "L2 MPKI", format_value(mpki, None, False)
+
+
+def discover_memory_controllers(stats: Dict[str, str]) -> List[Tuple[str, str]]:
+    ctrl_regex = re.compile(r"^system\.(mem_ctrls\[\d+\]|mem_ctrl)\.")
+    controllers: Dict[str, str] = {}
+    for key in stats.keys():
+        match = ctrl_regex.match(key)
+        if not match:
+            continue
+        suffix = match.group(1)
+        prefix = f"system.{suffix}."
+        controllers.setdefault(suffix, prefix)
+    if not controllers:
+        return []
+    sorted_items = sorted(controllers.items(), key=lambda item: item[0])
+    return [
+        (
+            f"MemCtrl[{suffix.split('[')[1].rstrip(']')}]" if "[" in suffix else "MemCtrl",
+            prefix,
+        )
+        for suffix, prefix in sorted_items
+    ]
+
+
+def collect_memory_controller_stats(prefix: str, stats: Dict[str, str]) -> Iterable[Tuple[str, str]]:
+    for suffix, label, unit in MEMORY_CONTROLLER_PRIMARY:
+        key = f"{prefix}{suffix}"
+        raw = stats.get(key)
+        value = normalise_number(raw) if raw is not None else None
+        if value is None:
+            continue
+        yield label, format_value(value, unit, False)
+
+    for suffix, label in MEMORY_CONTROLLER_LATENCY:
+        key = f"{prefix}{suffix}"
+        raw = stats.get(key)
+        value = normalise_number(raw) if raw is not None else None
+        if value is None:
+            continue
+        yield label, format_value(value, None, False)
 
 
 def main() -> None:
@@ -157,19 +262,33 @@ def main() -> None:
     for label, value in extract(GENERAL_METRICS, "", stats):
         print(f"  {label:28} {value}")
 
+    total_instructions: float = 0.0
+    have_instruction_data = False
+
     for cid in collect_cpu_ids(stats):
         prefix = f"system.cpu{cid}." if cid is not None else "system.cpu."
         cpu_label = f"CPU{cid}" if cid is not None else "CPU"
         print(f"\n{cpu_label} stats")
+        inst_key = f"{prefix}commitStats0.numInsts"
+        instructions = normalise_number(stats.get(inst_key))
+        if instructions is None:
+            fallback_inst = stats.get(f"{prefix}numInsts")
+            instructions = normalise_number(fallback_inst) if fallback_inst is not None else None
+        if instructions is not None:
+            have_instruction_data = True
+            try:
+                total_instructions += float(instructions)
+            except (TypeError, ValueError):
+                pass
         for label, value in extract(CPU_METRICS, prefix, stats):
             print(f"  {label:28} {value}")
         for cache_name, cache_label in CACHE_METRICS:
-            for label, value in collect_cache_metrics(cache_name, cache_label, prefix, stats):
-                if value == "<n/a>":
-                    continue
+            for label, value in collect_cache_metrics(cache_name, cache_label, prefix, stats, instructions):
                 print(f"  {label:28} {value}")
 
-    l2_data = list(collect_l2(stats))
+    total_instructions_value: Optional[Number] = total_instructions if have_instruction_data else None
+
+    l2_data = list(collect_l2(stats, total_instructions_value))
     if any(value != "<n/a>" for _, value in l2_data):
         print("\nShared cache stats")
         for label, value in l2_data:
@@ -177,7 +296,16 @@ def main() -> None:
                 continue
             print(f"  {label:28} {value}")
 
-    
+    mem_ctrls = discover_memory_controllers(stats)
+    for ctrl_label, prefix in mem_ctrls:
+        entries = list(collect_memory_controller_stats(prefix, stats))
+        if not entries:
+            continue
+        print(f"\nMemory controller ({ctrl_label})")
+        for label, value in entries:
+            print(f"  {label:28} {value}")
+
+
     print("\n================= end of statistics =================\n")
 
 
