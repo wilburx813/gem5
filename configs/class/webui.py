@@ -24,6 +24,7 @@ DEFAULT_CONFIG = CONFIG_DIR / "config.yaml"
 PARSE_STATS = CONFIG_DIR / "parse_stats.py"
 DEFAULT_PORT = 8080
 COMMAND_DIR = REPO_ROOT / "tests" / "class" / "bin" / "x86"
+EXPERIMENTS_DIR = REPO_ROOT / "configs" / "class" / "experiments"
 MEMORY_TYPE_CHOICES = [
     "DDR3_1600_8x8",
     "DDR3_2133_8x8",
@@ -43,10 +44,6 @@ REPLACEMENT_POLICY_SUGGESTIONS = [
     "SecondChanceRP",
 ]
 BOOL_SELECT_OPTIONS = ["inherit", "true", "false"]
-CACHE_PARAM_HELP = (
-    "One override per line; each becomes a gem5 --param. "
-    "Example: system.cpu[0:4].dcache.writeback_clean=true to alter the write policy."
-)
 ASSOC_KEYS = ["l1d_assoc", "l1i_assoc", "l2_assoc", "l3_assoc"]
 # field_name -> (level, attribute, value_kind)
 # level: l1d/l1i/l2/l3, attribute: BaseCache param, value_kind: 'bool' or 'string'
@@ -108,7 +105,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "CPU",
         options=["X86TimingSimpleCPU", "X86O3CPU", "X86AtomicSimpleCPU"],
         default="X86TimingSimpleCPU",
-        help_text="Maps to --cpu-type",
     ),
     FieldSpec(
         "num-cpus",
@@ -116,7 +112,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "number",
         "CPU",
         default=1,
-        help_text="Maps to --num-cpus",
     ),
     FieldSpec(
         "sys-clock",
@@ -124,7 +119,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "text",
         "CPU",
         default="1GHz",
-        help_text="Maps to --sys-clock (e.g. 1GHz)",
     ),
     FieldSpec(
         "cpu-clock",
@@ -132,7 +126,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "text",
         "CPU",
         default="2GHz",
-        help_text="Maps to --cpu-clock (e.g. 2GHz)",
     ),
     FieldSpec(
         "mem-type",
@@ -141,7 +134,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "Memory",
         default="DDR3_1600_8x8",
         options=MEMORY_TYPE_CHOICES,
-        help_text="Maps to --mem-type",
     ),
     FieldSpec(
         "mem-size",
@@ -149,28 +141,24 @@ FIELD_SPECS: List[FieldSpec] = [
         "text",
         "Memory",
         default="512MiB",
-        help_text="Maps to --mem-size (e.g. 2GB, 512MiB)",
     ),
     FieldSpec(
         "mem-channels",
         "Memory channels",
         "number",
         "Memory",
-        help_text="Optional --mem-channels override",
     ),
     FieldSpec(
         "mem-channels-intlv",
         "Memory channel interleave",
         "number",
         "Memory",
-        help_text="Optional --mem-channels-intlv",
     ),
     FieldSpec(
         "mem-ranks",
         "Memory ranks",
         "number",
         "Memory",
-        help_text="Optional --mem-ranks",
     ),
     FieldSpec(
         "caches",
@@ -178,7 +166,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "checkbox",
         "Cache",
         default=True,
-        help_text="Maps to --caches",
     ),
     FieldSpec(
         "l2cache",
@@ -186,7 +173,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "checkbox",
         "Cache",
         default=True,
-        help_text="Maps to --l2cache",
     ),
     FieldSpec(
         "l3cache",
@@ -194,7 +180,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "checkbox",
         "Cache",
         default=False,
-        help_text="Maps to --l3cache",
     ),
     FieldSpec(
         "l1d_size",
@@ -202,7 +187,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "text",
         "Cache",
         placeholder="64KiB",
-        help_text="Optional --l1d_size",
     ),
     FieldSpec(
         "l1i_size",
@@ -210,7 +194,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "text",
         "Cache",
         placeholder="32KiB",
-        help_text="Optional --l1i_size",
     ),
     FieldSpec(
         "l2_size",
@@ -218,7 +201,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "text",
         "Cache",
         placeholder="1MiB",
-        help_text="Optional --l2_size",
     ),
     FieldSpec(
         "l3_size",
@@ -226,7 +208,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "text",
         "Cache",
         placeholder="32MiB",
-        help_text="Optional --l3_size",
     ),
     FieldSpec(
         "num-dirs",
@@ -234,7 +215,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "number",
         "Cache",
         placeholder="1",
-        help_text="Optional --num-dirs",
     ),
     FieldSpec(
         "num-l2caches",
@@ -242,7 +222,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "number",
         "Cache",
         placeholder="1",
-        help_text="Optional --num-l2caches",
     ),
     FieldSpec(
         "num-l3caches",
@@ -250,7 +229,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "number",
         "Cache",
         placeholder="1",
-        help_text="Optional --num-l3caches",
     ),
     FieldSpec(
         "cacheline_size",
@@ -258,7 +236,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "number",
         "Cache",
         default=64,
-        help_text="Maps to --cacheline_size",
     ),
     FieldSpec(
         "cache_assoc",
@@ -266,7 +243,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "number",
         "Cache",
         placeholder="4",
-        help_text="Applies the same associativity to L1/L2/L3 caches",
     ),
     FieldSpec(
         "cache_replacement",
@@ -275,7 +251,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "Cache",
         options=REPLACEMENT_POLICY_SUGGESTIONS,
         placeholder="LRURP",
-        help_text="Applies to all configured caches via --cache_replacement",
     ),
     FieldSpec(
         "cache_is_read_only",
@@ -284,7 +259,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "Cache",
         options=BOOL_SELECT_OPTIONS,
         default="inherit",
-        help_text="Set is_read_only for every cache level (inherit keeps defaults)",
     ),
     FieldSpec(
         "cache_writeback_clean",
@@ -293,7 +267,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "Cache",
         options=BOOL_SELECT_OPTIONS,
         default="inherit",
-        help_text="Set writeback_clean for every cache level",
     ),
     FieldSpec(
         "cache_param_overrides",
@@ -301,7 +274,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "textarea",
         "Cache",
         placeholder="system.cpu[0:4].dcache.writeback_clean=true\nsystem.l2.write_buffers=16",
-        help_text=CACHE_PARAM_HELP,
     ),
     FieldSpec(
         "cmd",
@@ -310,7 +282,6 @@ FIELD_SPECS: List[FieldSpec] = [
         "Workload",
         default=DEFAULT_COMMAND,
         options=COMMAND_OPTIONS,
-        help_text="Binary to run; maps to --cmd",
     ),
     FieldSpec(
         "options",
@@ -318,13 +289,13 @@ FIELD_SPECS: List[FieldSpec] = [
         "text",
         "Workload",
         placeholder="e.g. 20000",
-        help_text="Optional --options string",
     ),
 ]
 
 
 SECTION_ORDER = ["CPU", "Memory", "Cache", "Workload"]
 CHECKBOX_NAMES = {spec.name for spec in FIELD_SPECS if spec.field_type == "checkbox"}
+FIELD_NAME_SET = {spec.name for spec in FIELD_SPECS}
 
 
 def _load_default_values() -> Dict[str, str]:
@@ -352,6 +323,97 @@ def _coerce_checkbox(default: object) -> bool:
     if isinstance(default, (int, float)):
         return bool(default)
     return False
+
+
+def _discover_experiment_configs() -> "OrderedDict[str, List[str]]":
+    experiments: "OrderedDict[str, List[str]]" = OrderedDict()
+    if not EXPERIMENTS_DIR.is_dir():
+        return experiments
+
+    # Collect YAML configs grouped by the first directory under configs/class/experiments.
+    yaml_files = sorted(EXPERIMENTS_DIR.rglob("*.yaml"))
+    for yaml_path in yaml_files:
+        if not yaml_path.is_file():
+            continue
+        try:
+            rel_repo_path = yaml_path.relative_to(REPO_ROOT)
+            rel_exp_path = yaml_path.relative_to(EXPERIMENTS_DIR)
+        except ValueError:
+            continue
+
+        parts = rel_exp_path.parts
+        if not parts:
+            continue
+        experiment_key = Path("configs", "class", "experiments", parts[0])
+        experiment_str = str(experiment_key)
+        experiments.setdefault(experiment_str, [])
+        experiments[experiment_str].append(str(rel_repo_path))
+
+    for key in experiments:
+        experiments[key].sort()
+
+    return experiments
+
+
+def _resolve_config_path(raw_path: str) -> Path:
+    cleaned = raw_path.strip()
+    if not cleaned:
+        raise ValueError("Configuration file path must not be empty")
+
+    candidate = Path(cleaned)
+    if not candidate.is_absolute():
+        candidate = (REPO_ROOT / candidate).resolve()
+    else:
+        candidate = candidate.resolve()
+
+    try:
+        candidate.relative_to(REPO_ROOT)
+    except ValueError as exc:
+        raise ValueError("Configuration file must remain inside the repository") from exc
+
+    if not candidate.is_file():
+        raise FileNotFoundError(f"Configuration file not found: {candidate}")
+
+    return candidate
+
+
+def _load_form_values_from_yaml(path: Path) -> Dict[str, str]:
+    overrides: List[str] = []
+    extra_lines: List[str] = []
+    form_values: Dict[str, str] = {}
+
+    text = path.read_text()
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        if ":" not in raw_line:
+            extra_lines.append(raw_line.rstrip())
+            continue
+
+        key, _, value = raw_line.partition(":")
+        key = key.strip()
+        value = value.strip()
+
+        if key.startswith("param_cache_"):
+            if value:
+                overrides.append(value)
+            continue
+
+        if key in FIELD_NAME_SET:
+            if key in CHECKBOX_NAMES:
+                lowered = value.lower()
+                form_values[key] = "true" if lowered in {"true", "1", "yes", "on"} else ""
+            else:
+                form_values[key] = value
+        else:
+            extra_lines.append(raw_line.rstrip())
+
+    form_values["cache_param_overrides"] = "\n".join(overrides)
+    form_values["extra_lines"] = "\n".join(extra_lines)
+
+    return form_values
 
 
 def _ordered_config_from_form(
@@ -695,12 +757,67 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
             if checkbox not in form_values:
                 form_values[checkbox] = ""
 
+        action = (
+            form_values.get("action_override")
+            or form_values.get("action")
+            or ""
+        )
+
+        form_values["action_override"] = ""
+
         yaml_text = ""
         stdout = ""
         stderr = ""
         stats = ""
         message = "Simulation launched successfully."
         is_error = False
+
+        if action == "select_experiment":
+            picked = form_values.get("experiment_choice", "")
+            form_values["config_path"] = ""
+            yaml_text = ""
+            if picked:
+                message = f"Experiment {picked} selected."
+            else:
+                message = "Experiment selection cleared."
+            content = self._render_page(
+                form_values, message, yaml_text, stdout, stats, stderr, is_error
+            )
+            self._send_response(content)
+            return
+
+        if action == "load":
+            config_path_text = form_values.get("config_path", "")
+            if not config_path_text.strip():
+                message = "Select a configuration file before loading."
+                is_error = True
+                content = self._render_page(
+                    form_values, message, yaml_text, stdout, stats, stderr, is_error
+                )
+                self._send_response(content)
+                return
+            try:
+                config_path = _resolve_config_path(config_path_text)
+                loaded_values = _load_form_values_from_yaml(config_path)
+                form_values.update(loaded_values)
+                yaml_text = config_path.read_text()
+                rel_path = config_path.relative_to(REPO_ROOT)
+                message = f"Loaded configuration file {rel_path}"
+                form_values["config_path"] = str(rel_path)
+                rel_parts = rel_path.parts
+                if (
+                    len(rel_parts) >= 4
+                    and rel_parts[0] == "configs"
+                    and rel_parts[1] == "class"
+                    and rel_parts[2] == "experiments"
+                ):
+                    form_values["experiment_choice"] = str(Path(*rel_parts[:4]))
+            except Exception as exc:
+                message = f"Failed to read configuration: {exc}"
+                is_error = True
+            content = self._render_page(form_values, message, yaml_text, stdout, stats, stderr, is_error)
+            self._send_response(content)
+            return
 
         try:
             ordered_config, param_lines, extra_lines = _ordered_config_from_form(form_values)
@@ -746,6 +863,76 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
         stderr_block = _html_escape_pre(stderr)
         stats_block = _html_escape_pre(stats)
         extra_lines = html.escape(form_values.get("extra_lines", ""))
+        selected_config_path = form_values.get("config_path", "")
+        selected_experiment = form_values.get("experiment_choice", "")
+        experiment_configs = _discover_experiment_configs()
+
+        experiment_select_html = ""
+        if experiment_configs:
+            exp_options: List[str] = []
+            placeholder_selected = " selected" if not selected_experiment else ""
+            exp_options.append(
+                f'<option value=""{placeholder_selected}>Select experiment…</option>'
+            )
+            for exp_path in experiment_configs.keys():
+                escaped = html.escape(exp_path)
+                selected = " selected" if exp_path == selected_experiment else ""
+                exp_options.append(
+                    f'<option value="{escaped}"{selected}>{escaped}</option>'
+                )
+            if selected_experiment and selected_experiment not in experiment_configs:
+                escaped_selected = html.escape(selected_experiment)
+                exp_options.append(
+                    f'<option value="{escaped_selected}" selected>{escaped_selected}</option>'
+                )
+            experiment_select_html = (
+                f'<select name="experiment_choice">{"".join(exp_options)}</select>'
+            )
+        elif selected_experiment:
+            escaped_selected = html.escape(selected_experiment)
+            experiment_select_html = (
+                f'<select name="experiment_choice">'
+                f'<option value="{escaped_selected}" selected>{escaped_selected}</option>'
+                "</select>"
+            )
+
+        config_select_html = ""
+        if (
+            selected_experiment
+            and selected_experiment in experiment_configs
+            and experiment_configs[selected_experiment]
+        ):
+            config_options: List[str] = []
+            placeholder_selected = " selected" if not selected_config_path else ""
+            config_options.append(
+                f'<option value=""{placeholder_selected}>Select configuration…</option>'
+            )
+            seen_paths = set()
+            for path in experiment_configs[selected_experiment]:
+                escaped_value = html.escape(path)
+                display_name = html.escape(Path(path).name)
+                selected = " selected" if path == selected_config_path else ""
+                config_options.append(
+                    f'<option value="{escaped_value}"{selected}>{display_name}</option>'
+                )
+                seen_paths.add(path)
+            if selected_config_path and selected_config_path not in seen_paths:
+                escaped_selected = html.escape(selected_config_path)
+                display_name = html.escape(Path(selected_config_path).name)
+                config_options.append(
+                    f'<option value="{escaped_selected}" selected>{display_name}</option>'
+                )
+            config_select_html = (
+                f'<select name="config_path">{"".join(config_options)}</select>'
+            )
+        elif selected_config_path:
+            escaped_selected = html.escape(selected_config_path)
+            display_name = html.escape(Path(selected_config_path).name)
+            config_select_html = (
+                f'<select name="config_path">'
+                f'<option value="{escaped_selected}" selected>{display_name}</option>'
+                "</select>"
+            )
 
         status_class = "status error" if is_error else "status ok"
 
@@ -774,6 +961,20 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                     form {{
                         display: grid;
                         gap: 1rem;
+                    }}
+                    .load-config {{
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                        gap: 0.75rem 1rem;
+                        align-items: end;
+                    }}
+                    .load-config label {{
+                        margin: 0;
+                    }}
+                    .load-config p {{
+                        margin: 0;
+                        font-size: 0.9rem;
+                        color: #6b7280;
                     }}
                     fieldset {{
                         border: 1px solid #d1d5db;
@@ -875,13 +1076,24 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                 <main>
                     <div class="{status_class}" id="status-msg">{html.escape(message)}</div>
                     <form method="post">
+                        <input type="hidden" name="action_override" value="{html.escape(form_values.get('action_override', ''))}">
+                        <div class="load-config">
+                            <label>
+                                Select Experiment
+                                {experiment_select_html or '<p>No experiment directories found.</p>'}
+                            </label>
+                            <label>
+                                Load YAML Config
+                                <div class="help">Select an experiment first, then choose a specific configuration.</div>
+                                {config_select_html or ('<p>Select an experiment to view configurations.</p>' if experiment_select_html else '<p>No configuration files found.</p>')}
+                            </label>
+                        </div>
                         {sections_html}
                         <label>
                             Additional YAML lines
-                            <div class="help">Appended to the generated config; ideal for quick custom overrides.</div>
                             <textarea name="extra_lines" placeholder="Example:&#10;ruby: true">{extra_lines}</textarea>
                         </label>
-                        <button type="submit">Run gem5</button>
+                        <button type="submit" name="action" value="run">Run gem5</button>
                     </form>
                     <section>
                         <h2>Generated YAML</h2>
@@ -906,19 +1118,41 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                     document.addEventListener("DOMContentLoaded", function () {{
                         var form = document.querySelector("form");
                         var statusBox = document.getElementById("status-msg");
+                        var actionOverride = form ? form.querySelector('input[name="action_override"]') : null;
+                        var experimentSelect = form ? form.querySelector('select[name="experiment_choice"]') : null;
+                        var configSelect = form ? form.querySelector('select[name="config_path"]') : null;
                         if (!form || !statusBox) {{
                             return;
                         }}
-                        form.addEventListener("submit", function () {{
+                        if (experimentSelect && actionOverride) {{
+                            experimentSelect.addEventListener("change", function () {{
+                                actionOverride.value = "select_experiment";
+                                if (configSelect) {{
+                                    configSelect.selectedIndex = 0;
+                                }}
+                                form.submit();
+                            }});
+                        }}
+                        if (configSelect && actionOverride) {{
+                            configSelect.addEventListener("change", function () {{
+                                if (!configSelect.value) {{
+                                    return;
+                                }}
+                                actionOverride.value = "load";
+                                form.submit();
+                            }});
+                        }}
+                        form.addEventListener("submit", function (event) {{
+                            var submitter = event.submitter;
+                            if (!submitter || submitter.value !== "run") {{
+                                return;
+                            }}
                             statusBox.textContent = "Simulation running…";
                             statusBox.className = "status running";
-                            var submit = form.querySelector('button[type="submit"]');
-                            if (submit) {{
-                                submit.disabled = true;
-                                submit.textContent = "Running…";
-                                submit.style.opacity = "0.7";
-                                submit.style.cursor = "wait";
-                            }}
+                            submitter.disabled = true;
+                            submitter.textContent = "Running…";
+                            submitter.style.opacity = "0.7";
+                            submitter.style.cursor = "wait";
                         }});
                     }});
                 </script>
