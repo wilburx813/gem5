@@ -44,3 +44,5 @@ ppt
 /prebuilt-gem5-X86.tar.gz
 # Ignore test binaries
 /tests/**/bin/
+/home/wilburx/gem5/configs/class/result
+/home/wilburx/gem5/configs/class/run_all_experiments.py
