@@ -1,0 +1,11 @@
+cpu-type: X86TimingSimpleCPU
+num-cpus: 1
+sys-clock: 1GHz
+cpu-clock: 2GHz
+mem-type: DDR3_1600_8x8
+mem-size: 512MiB
+caches: false
+l2cache: false
+l3cache: false
+cacheline_size: 64
+cmd: tests/class/bin/x86/class_matrixmul
