@@ -1,0 +1,133 @@
+% !TEX program = xelatex
+\documentclass[aspectratio=169]{beamer}
+\usetheme{Madrid}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+
+\usepackage[UTF8]{ctex}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{array}
+
+\title{gem5 课程实验：gem5 简介、WebUI 使用与缓存参数研究}
+\author{课程实验模板}
+\institute{\texttt{configs/class}}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\begin{frame}{目录}
+  \tableofcontents
+\end{frame}
+
+\section{gem5 简介}
+
+\begin{frame}{什么是 gem5}
+  \begin{itemize}
+    \item 模块化、可扩展的计算机系统模拟器，学术/工业广泛使用
+    \item 支持多 ISA（X86、ARM、RISC-V 等）与多内存/缓存模型
+    \item 两种常用模式：SE（System-Call Emulation）与 FS（Full System）
+    \item 本实验采用 X86 + SE 模式，聚焦缓存层次结构与参数影响
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{仓库与关键脚本}
+  \begin{itemize}
+    \item 运行入口：\texttt{configs/class/run.sh}（单份 YAML 配置）
+    \item 批量实验：\texttt{configs/class/run_all_experiments.py}
+    \item 统计解析：\texttt{configs/class/parse_stats.py}（汇总 IPC/MPKI 等）
+    \item WebUI：\texttt{configs/class/webui.py}（表单生成 YAML、触发运行、展示摘要）
+  \end{itemize}
+\end{frame}
+
+\section{WebUI 使用}
+
+\begin{frame}{启动与访问}
+  \begin{itemize}
+    \item 启动：\texttt{python3 configs/class/webui.py --host 127.0.0.1 --port 8080}
+    \item 浏览器访问：\texttt{http://127.0.0.1:8080}
+    \item 从左上选择实验与配置，或直接在表单区编辑参数
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{表单要点}
+  \begin{itemize}
+    \item CPU/Memory：核数、主频、内存类型与容量
+    \item Cache：\texttt{cacheline\_size}、\texttt{cache\_assoc}、替换策略、\texttt{is\_read\_only}、\texttt{writeback\_clean}
+    \item Workload：二进制与参数（示例：\texttt{tests/class/bin/x86/class\_matrixmul}）
+    \item 运行后可查看生成的 YAML、gem5 标准输出与统计摘要
+  \end{itemize}
+\end{frame}
+
+\section{缓存参数实验}
+
+\begin{frame}{实验主题与期望}
+  \begin{itemize}
+    \item 相联度（associativity）：缓解冲突 Miss，收益在中高路数后趋缓
+    \item 容量（capacity）：容量增大显著降低 Miss、提升 IPC
+    \item 层次（hierarchy）：无缓存最差，逐级增加改善；工作集决定 L3 收益
+    \item 行大小（line size）：更大行提升空间局部性，Miss 降低
+    \item 替换策略（replacement）：LRU/TreePLRU 等对局部性友好；MRU/LFU 可能放大抖动
+    \item 只读（is\_read\_only）：读主导负载差异有限；写多或自修改程序差异明显
+    \item clean 写回（writeback\_clean）：脏度低时差异不大，压力场景下延迟/带宽更敏感
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{方法与工作负载}
+  \begin{itemize}
+    \item 统一负载：\texttt{class\_matrixmul}（矩阵乘）
+    \item 固定不变：CPU 频率/个数、内存类型等
+    \item 单因素变化：每次只改变一个缓存参数，其他保持不变
+    \item 指令：\texttt{python3 configs/class/run\_all\_experiments.py --verbose}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{结果展示（占位）}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{IPC vs 参数}
+      
+      \vspace{0.6em}
+      \includegraphics[width=\linewidth,height=0.55\textheight]{example-image-a}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{L1D/L2 Miss vs 参数}
+      
+      \vspace{0.6em}
+      \includegraphics[width=\linewidth,height=0.55\textheight]{example-image-b}
+    \end{column}
+  \end{columns}
+  \vspace{0.5em}
+  （用 \texttt{configs/class/result/*/*.stats} 中数据作图）
+\end{frame}
+
+\begin{frame}{关键观察（示例）}
+  \begin{itemize}
+    \item 相联度：2→4 阶段 Miss 率明显下降，8 路后收益趋缓
+    \item 容量：L1/L2 增大使 L1D MPKI 从 \textasciitilde130 降到 \textasciitilde1；IPC 提升显著
+    \item 行大小：64→256 Byte，L1D Miss 明显降低，IPC 稳步提升
+    \item 替换策略：\texttt{TreePLRURP}/\texttt{LRURP} 更稳；\texttt{MRURP}/\texttt{LFURP} 在抖动负载下反而更好或更差，取决于访问模式
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{如何复现实验}
+  \begin{itemize}
+    \item 单个配置：\texttt{bash configs/class/run.sh configs/class/experiments/<exp>/configX.yaml}
+    \item 全量批跑：\texttt{python3 configs/class/run\_all\_experiments.py}
+    \item 统计摘要：\texttt{python3 configs/class/parse\_stats.py --stats m5out/stats.txt}
+    \item WebUI：\texttt{python3 configs/class/webui.py --port 8080}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Q\&A}
+  \centering
+  谢谢！欢迎提问。
+\end{frame}
+
+\end{document}
+
