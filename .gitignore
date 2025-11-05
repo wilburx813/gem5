@@ -46,3 +46,17 @@ ppt
 /tests/**/bin/
 /home/wilburx/gem5/configs/class/result
 /home/wilburx/gem5/configs/class/run_all_experiments.py
+
+# Slides build artifacts and intermediates
+/slides/gem5_intro/tectonic
+/slides/gem5_intro/tectonic.tar.gz
+/slides/gem5_intro/*.aux
+/slides/gem5_intro/*.log
+/slides/gem5_intro/*.nav
+/slides/gem5_intro/*.snm
+/slides/gem5_intro/*.toc
+/slides/gem5_intro/*.vrb
+# Generated images (considered intermediate)
+/slides/gem5_intro/*.png
+# Do not commit PPTX artifacts
+/slides/gem5_intro/*.pptx

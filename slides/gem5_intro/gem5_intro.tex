@@ -1,0 +1,171 @@
+% Beamer presentation for gem5 introduction
+\documentclass[aspectratio=169]{beamer}
+
+% A widely available academic-looking theme
+\usetheme{CambridgeUS}
+% Blue tone color setup
+\usecolortheme{dolphin}
+\definecolor{GemBlue}{RGB}{0,85,170}
+\setbeamercolor{structure}{fg=GemBlue}
+\setbeamercolor{title}{fg=GemBlue}
+\setbeamercolor{frametitle}{fg=GemBlue}
+\setbeamercolor{item}{fg=GemBlue}
+\setbeamercolor{block title}{bg=GemBlue!15, fg=GemBlue}
+\setbeamercolor{block body}{bg=GemBlue!3}
+\setbeamercolor{palette primary}{bg=GemBlue, fg=white}
+\setbeamercolor{palette secondary}{bg=GemBlue!85, fg=white}
+\setbeamercolor{palette tertiary}{bg=GemBlue!70, fg=white}
+\setbeamercolor{palette quaternary}{bg=GemBlue!50, fg=white}
+
+% Basic packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{xcolor}
+
+\hypersetup{
+  colorlinks=true,
+  urlcolor=blue,
+  linkcolor=blue
+}
+
+% Verbatim will be used for code instead of listings to keep dependencies minimal
+
+% Title info
+\title[gem5: Intro and Usage]{Introduction and Usage of the gem5 Simulator}
+\author{Jiyuan Liu}
+\date{November 2025}
+
+\begin{document}
+
+% Title page
+\begin{frame}
+  \titlepage
+\end{frame}
+
+% Slide 2: What is gem5?
+\begin{frame}{What is gem5?}
+\textbf{Definition:} gem5 is a modular, open-source computer architecture simulation platform supporting diverse CPU, cache, memory, and system configurations.
+\vspace{0.6em}
+\begin{itemize}
+  \item Multi-ISA support: x86, ARM, RISC-V, MIPS, etc.
+  \item Two simulation modes: Full System (FS) and Syscall Emulation (SE)
+  \item Modular architecture: CPU / Cache / Memory / Devices are composable
+  \item Hybrid design: Python for configuration, C++ for simulation core
+\end{itemize}
+\end{frame}
+
+% Slide 3+4 merged: Major subsystems overview
+\begin{frame}{Major Subsystems Overview}
+\small
+gem5 is organized into several major subsystems that can be independently configured and extended.
+\medskip
+
+\begin{table}
+  \centering
+  \scriptsize
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    Subsystem & Purpose & Key Components \\
+    \midrule
+    CPU Models & Processor simulation & SimpleCPU, O3CPU, MinorCPU \\
+    Memory System & Memory hierarchy & Cache models, Ruby coherence, DRAM controllers \\
+    ISA Support & Instruction sets & ARM, x86, RISC-V decoders and execution \\
+    Device Models & I/O and platform & Platform models, device controllers \\
+    System Modes & Execution context & Full-system, syscall emulation \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{block}{Composition via SimObjects}
+Each subsystem is implemented through the SimObject framework, allowing flexible composition of different models. For example, an ARM system can use the O3 CPU model with Ruby coherence and DDR4 memory controllers.
+\end{block}
+\end{frame}
+
+% New slide: WebUI usage (between 3 and 4)
+\begin{frame}[fragile]{WebUI Usage}
+\textbf{Step 1: Open GitHub Codespaces}
+\begin{itemize}
+  \item Launch a Codespace for this repository.
+\end{itemize}
+\textbf{Step 2: Start the Web UI}
+\begin{exampleblock}{}
+\begin{verbatim}
+python3 configs/class/webui.py --host 127.0.0.1 --port 8080
+\end{verbatim}
+\end{exampleblock}
+\textbf{Step 3: Configuration Selection}
+\begin{itemize}
+  \item Select a predefined configuration
+  \item or build a custom configuration
+\end{itemize}
+\textbf{Step 4: Analyze results}
+\begin{itemize}
+  \item Inspect statistics (IPC, miss rates), logs, and outputs
+\end{itemize}
+\end{frame}
+
+% Slide 5: Course experiments and test programs mapping
+\begin{frame}[fragile]{Course Experiments and Test Programs}
+\textbf{Experiments (\texttt{configs/class/experiments/})}
+\begin{enumerate}
+  \item capacity
+  \item associativity
+  \item line size
+  \item replacement policy
+  \item hierarchy
+  \item is\_read\_only
+  \item writeback\_clean
+\end{enumerate}
+\textbf{Test programs (\texttt{tests/class/bin/x86/})}
+\begin{itemize}
+  \item hello, matrixmul, matrixmul\_smallsize
+  \item memsum, streamcopy, cachethrash
+  \item fpvector, branchstorm
+\end{itemize}
+\end{frame}
+
+% Live demo link (moved after mapping)
+\begin{frame}{Live Demo}
+\centering
+\Large\href{https://github.com/wilburx813/gem5}{https://github.com/wilburx813/gem5}
+\end{frame}
+
+% (Removed slide: Inspecting and Analyzing Results)
+
+% Slide 8: Course experiments
+% (Removed) Course Experiment Examples
+
+% Slide 7: Results demo (replace Advanced Topics)
+\begin{frame}{Results Demo: Cache Capacity vs L1D Miss Rate}
+\begin{figure}
+  \centering
+  \includegraphics[width=0.9\linewidth]{cache_capacity_l1d_miss.png}
+\end{figure}
+\end{frame}
+
+% Slide 10: Summary and references
+\begin{frame}{Summary and References}
+\textbf{Summary}
+\begin{itemize}
+  \item gem5 is a powerful, extensible tool for architecture education and research
+  \item Modular, multi-ISA, configurable from simple to system-level studies
+\end{itemize}
+\textbf{References}
+\begin{itemize}
+  \item gem5 website: \href{https://www.gem5.org}{https://www.gem5.org}
+  \item Documentation: \href{https://www.gem5.org/documentation/}{https://www.gem5.org/documentation/}
+  \item GitHub: \href{https://github.com/gem5/gem5}{https://github.com/gem5/gem5}
+  \item Recommended: \textit{Learning gem5} official tutorials
+\end{itemize}
+\end{frame}
+
+% Final: Q&A
+\begin{frame}{Q\&A}
+\centering
+\Large Questions?
+\end{frame}
+
+\end{document}
