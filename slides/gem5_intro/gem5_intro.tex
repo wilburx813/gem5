@@ -22,6 +22,7 @@
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
 \usepackage{hyperref}
+\usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{xcolor}
 
@@ -43,6 +44,24 @@
 % Title page
 \begin{frame}
   \titlepage
+\end{frame}
+
+% Setup slide (moved after title)
+\begin{frame}{Setup: GitHub + Codespaces}
+\begin{columns}[c,totalwidth=\textwidth]
+  \begin{column}{0.45\textwidth}
+    \centering
+    \includegraphics[width=\linewidth,height=0.48\textheight,keepaspectratio]{image.png}
+  \end{column}
+  \begin{column}{0.55\textwidth}
+    {\small
+    \begin{itemize}\setlength{\itemsep}{0.6ex}
+      \item Register a GitHub account (if you don't have one)
+      \item Open a Codespace for: \href{https://github.com/wilburx813/gem5}{wilburx813/gem5}\\
+            Code $\rightarrow$ Codespaces $\rightarrow$ Create codespaces on stable
+    \end{itemize}}
+  \end{column}
+\end{columns}
 \end{frame}
 
 % Slide 2: What is gem5?
