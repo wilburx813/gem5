@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+set -eu
+
+# Resolve repo root relative to this script location
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+cd "$REPO_ROOT"
+
+# Allow extra args to override/extend if needed
+exec python3 configs/class/webui.py --host 127.0.0.1 --port 8080 "$@"
+
