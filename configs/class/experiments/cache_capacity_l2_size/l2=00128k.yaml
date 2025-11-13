@@ -7,9 +7,9 @@ mem-size: 512MiB
 caches: true
 l2cache: true
 l3cache: false
-l1d_size: 32KiB
-l1i_size: 32KiB
-l2_size: 512KiB
+l1d_size: 16KiB
+l1i_size: 16KiB
+l2_size: 64KiB
 cacheline_size: 64
 cache_assoc: 4
 cmd: tests/class/bin/x86/class_matrixmul
