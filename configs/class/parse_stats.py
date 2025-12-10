@@ -44,15 +44,34 @@ L2_EXTRA_METRICS = (
 )
 
 MEMORY_CONTROLLER_PRIMARY = (
-    ("dram__num_reads::total", "DRAM read requests", None),
-    ("dram__num_writes::total", "DRAM write requests", None),
-    ("dram__bytes_read::total", "DRAM bytes read", "B"),
-    ("dram__bytes_written::total", "DRAM bytes written", "B"),
+    (("dram__num_reads::total", "readReqs"), "DRAM read requests", None),
+    (("dram__num_writes::total", "writeReqs"), "DRAM write requests", None),
+    (("dram__bytes_read::total",), "DRAM bytes read", "B"),
+    (("dram__bytes_written::total",), "DRAM bytes written", "B"),
 )
 
 MEMORY_CONTROLLER_LATENCY = (
-    ("dram__avg_mem_access_latency", "Avg mem access latency"),
-    ("dram__avg_queueing_latency", "Avg queue delay"),
+    (("dram__avg_queueing_latency",), "Avg queue delay"),
+)
+
+MEMORY_CONTROLLER_QUEUE = (
+    ("avgRdQLen", "Avg read queue len", None),
+    ("avgWrQLen", "Avg write queue len", None),
+    ("numReadWriteTurnArounds", "RD->WR turnarounds", None),
+    ("numWriteReadTurnArounds", "WR->RD turnarounds", None),
+    ("numRdRetry", "Read queue retries", None),
+    ("numWrRetry", "Write queue retries", None),
+)
+
+MEMORY_CONTROLLER_TRAFFIC = (
+    ("readBursts", "Read bursts", None),
+    ("writeBursts", "Write bursts", None),
+)
+
+MEMORY_CONTROLLER_BANDWIDTH = (
+    (("dram.bwRead::total",), "Read bandwidth", "B/s"),
+    (("dram.bwWrite::total",), "Write bandwidth", "B/s"),
+    (("dram.bwTotal::total",), "Total bandwidth", "B/s"),
 )
 
 
@@ -107,6 +126,16 @@ def format_value(value: Optional[Number], unit: Optional[str], ratio: bool) -> s
     if unit:
         return f"{formatted} {unit}"
     return formatted
+
+
+def ticks_to_ns(value: Optional[Number], tick_hz: Optional[Number]) -> Optional[float]:
+    """Convert tick-based latency to nanoseconds using simFreq if available."""
+    if value is None or tick_hz is None:
+        return None
+    try:
+        return float(value) / float(tick_hz) * 1e9
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
 
 
 def calculate_mpki(misses: Optional[Number], instructions: Optional[Number]) -> Optional[float]:
@@ -200,7 +229,7 @@ def collect_l2(stats: Dict[str, str], instructions: Optional[Number]) -> Iterabl
 
 
 def discover_memory_controllers(stats: Dict[str, str]) -> List[Tuple[str, str]]:
-    ctrl_regex = re.compile(r"^system\.(mem_ctrls\[\d+\]|mem_ctrl)\.")
+    ctrl_regex = re.compile(r"^system\.(mem_ctrls(?:\[\d+\])?|mem_ctrl)\.")
     controllers: Dict[str, str] = {}
     for key in stats.keys():
         match = ctrl_regex.match(key)
@@ -212,17 +241,50 @@ def discover_memory_controllers(stats: Dict[str, str]) -> List[Tuple[str, str]]:
     if not controllers:
         return []
     sorted_items = sorted(controllers.items(), key=lambda item: item[0])
-    return [
-        (
-            f"MemCtrl[{suffix.split('[')[1].rstrip(']')}]" if "[" in suffix else "MemCtrl",
-            prefix,
-        )
-        for suffix, prefix in sorted_items
-    ]
+    labels = []
+    for suffix, prefix in sorted_items:
+        if suffix.startswith("mem_ctrls["):
+            label = f"MemCtrl[{suffix.split('[')[1].rstrip(']')}]"
+        elif suffix == "mem_ctrls":
+            label = "MemCtrls"
+        else:
+            label = "MemCtrl"
+        labels.append((label, prefix))
+    return labels
 
 
-def collect_memory_controller_stats(prefix: str, stats: Dict[str, str]) -> Iterable[Tuple[str, str]]:
-    for suffix, label, unit in MEMORY_CONTROLLER_PRIMARY:
+def _first_available(prefix: str, suffixes: Iterable[str], stats: Dict[str, str]) -> Optional[str]:
+    for suffix in suffixes:
+        key = f"{prefix}{suffix}"
+        if key in stats:
+            return stats[key]
+    return None
+
+
+def collect_memory_controller_stats(prefix: str, stats: Dict[str, str], tick_hz: Optional[Number]) -> Iterable[Tuple[str, str]]:
+    avg_lat_raw = stats.get(f"{prefix}dram.avgMemAccLat")
+    avg_lat_ticks = normalise_number(avg_lat_raw) if avg_lat_raw is not None else None
+    avg_lat_ns = ticks_to_ns(avg_lat_ticks, tick_hz)
+    if avg_lat_ns is not None:
+        yield "Avg mem access latency", f"{avg_lat_ns:.3f} ns"
+    elif avg_lat_ticks is not None:
+        yield "Avg mem access latency (ticks)", format_value(avg_lat_ticks, "ticks", False)
+
+    for suffixes, label, unit in MEMORY_CONTROLLER_PRIMARY:
+        raw = _first_available(prefix, suffixes, stats)
+        value = normalise_number(raw) if raw is not None else None
+        if value is None:
+            continue
+        yield label, format_value(value, unit, False)
+
+    for suffixes, label in MEMORY_CONTROLLER_LATENCY:
+        raw = _first_available(prefix, suffixes, stats)
+        value = normalise_number(raw) if raw is not None else None
+        if value is None:
+            continue
+        yield label, format_value(value, None, False)
+
+    for suffix, label, unit in MEMORY_CONTROLLER_QUEUE:
         key = f"{prefix}{suffix}"
         raw = stats.get(key)
         value = normalise_number(raw) if raw is not None else None
@@ -230,13 +292,20 @@ def collect_memory_controller_stats(prefix: str, stats: Dict[str, str]) -> Itera
             continue
         yield label, format_value(value, unit, False)
 
-    for suffix, label in MEMORY_CONTROLLER_LATENCY:
+    for suffix, label, unit in MEMORY_CONTROLLER_TRAFFIC:
         key = f"{prefix}{suffix}"
         raw = stats.get(key)
         value = normalise_number(raw) if raw is not None else None
         if value is None:
             continue
-        yield label, format_value(value, None, False)
+        yield label, format_value(value, unit, False)
+
+    for suffixes, label, unit in MEMORY_CONTROLLER_BANDWIDTH:
+        raw = _first_available(prefix, suffixes, stats)
+        value = normalise_number(raw) if raw is not None else None
+        if value is None:
+            continue
+        yield label, format_value(value, unit, False)
 
 
 def main() -> None:
@@ -256,6 +325,8 @@ def main() -> None:
     stats = parse_stats_file(stats_path)
     if not stats:
         raise SystemExit("No statistics parsed from file")
+
+    tick_hz = normalise_number(stats.get("simFreq"))
 
     # 前分隔符
     print("\n================= statistics =================\n")
@@ -301,7 +372,7 @@ def main() -> None:
 
     mem_ctrls = discover_memory_controllers(stats)
     for ctrl_label, prefix in mem_ctrls:
-        entries = list(collect_memory_controller_stats(prefix, stats))
+        entries = list(collect_memory_controller_stats(prefix, stats, tick_hz))
         if not entries:
             continue
         print(f"\nMemory controller ({ctrl_label})")

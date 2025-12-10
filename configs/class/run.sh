@@ -17,6 +17,23 @@ cache_writeback_clean_value=""
 num_cpus_value=""
 caches_enabled=""
 l2cache_enabled=""
+mem_channels_value=""
+mem_device_size_value=""
+mem_device_bus_width_value=""
+mem_devices_per_rank_value=""
+mem_ranks_per_channel_value=""
+mem_banks_per_rank_value=""
+mem_bank_groups_per_rank_value=""
+mem_page_policy_value=""
+
+quote_param_value() {
+    local val="$1"
+    if [[ "$val" =~ [^0-9eE.+-] ]]; then
+        printf "'%s'" "$val"
+    else
+        printf "%s" "$val"
+    fi
+}
 
 normalise_bool() {
     local raw="${1:-}"
@@ -104,6 +121,29 @@ while IFS= read -r line || [[ -n "$line" ]]; do
         caches_enabled="$value_lower"
     elif [[ "$key" == "l2cache" ]]; then
         l2cache_enabled="$value_lower"
+    elif [[ "$key" == "mem-channels" ]]; then
+        mem_channels_value="$value"
+    elif [[ "$key" == "mem_device_size" ]]; then
+        mem_device_size_value="$value"
+        continue
+    elif [[ "$key" == "mem_device_bus_width" ]]; then
+        mem_device_bus_width_value="$value"
+        continue
+    elif [[ "$key" == "mem_devices_per_rank" ]]; then
+        mem_devices_per_rank_value="$value"
+        continue
+    elif [[ "$key" == "mem_ranks_per_channel" ]]; then
+        mem_ranks_per_channel_value="$value"
+        continue
+    elif [[ "$key" == "mem_banks_per_rank" ]]; then
+        mem_banks_per_rank_value="$value"
+        continue
+    elif [[ "$key" == "mem_bank_groups_per_rank" ]]; then
+        mem_bank_groups_per_rank_value="$value"
+        continue
+    elif [[ "$key" == "mem_page_policy" ]]; then
+        mem_page_policy_value="$value"
+        continue
     fi
 
     if [[ "$key" == "l3cache" ]]; then
@@ -136,6 +176,9 @@ fi
 if [[ -z "$num_cpus_value" ]]; then
     num_cpus_value="1"
 fi
+if [[ -z "$mem_channels_value" ]]; then
+    mem_channels_value="1"
+fi
 
 bool_value=""
 if bool_value=$(normalise_bool "$cache_is_read_only_value"); then
@@ -161,6 +204,31 @@ if bool_value=$(normalise_bool "$cache_writeback_clean_value"); then
         param_args+=("system.l2.writeback_clean=$bool_value")
     fi
 fi
+
+# 统一为所有内存控制器设置组织参数（若提供）
+for ((i = 0; i < mem_channels_value; i++)); do
+    if [[ -n "$mem_device_size_value" ]]; then
+        param_args+=("system.mem_ctrls[$i].dram.device_size=$(quote_param_value "$mem_device_size_value")")
+    fi
+    if [[ -n "$mem_device_bus_width_value" ]]; then
+        param_args+=("system.mem_ctrls[$i].dram.device_bus_width=$(quote_param_value "$mem_device_bus_width_value")")
+    fi
+    if [[ -n "$mem_devices_per_rank_value" ]]; then
+        param_args+=("system.mem_ctrls[$i].dram.devices_per_rank=$(quote_param_value "$mem_devices_per_rank_value")")
+    fi
+    if [[ -n "$mem_ranks_per_channel_value" ]]; then
+        param_args+=("system.mem_ctrls[$i].dram.ranks_per_channel=$(quote_param_value "$mem_ranks_per_channel_value")")
+    fi
+    if [[ -n "$mem_banks_per_rank_value" ]]; then
+        param_args+=("system.mem_ctrls[$i].dram.banks_per_rank=$(quote_param_value "$mem_banks_per_rank_value")")
+    fi
+    if [[ -n "$mem_bank_groups_per_rank_value" ]]; then
+        param_args+=("system.mem_ctrls[$i].dram.bank_groups_per_rank=$(quote_param_value "$mem_bank_groups_per_rank_value")")
+    fi
+    if [[ -n "$mem_page_policy_value" ]]; then
+        param_args+=("system.mem_ctrls[$i].dram.page_policy=$(quote_param_value "$mem_page_policy_value")")
+    fi
+done
 
 # 附加 --param 覆盖
 for p in "${param_args[@]}"; do
