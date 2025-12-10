@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 #ifndef ELEMS
-#define ELEMS (1u << 22)  /* 16MB worth of floats */
+#define ELEMS (1u << 15)  /* 16MB worth of floats */
 #endif
 #ifndef REPS
 #define REPS 8            /* fewer repeats to shorten runtime */

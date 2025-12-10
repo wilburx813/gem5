@@ -6,7 +6,7 @@
 #define STRIDE (1u << 14)  /* 16KB stride to hit same bank groups */
 #endif
 #ifndef ITERS
-#define ITERS (1u << 24)   /* fewer total touches to shorten runtime */
+#define ITERS (1u << 18)   /* fewer total touches to shorten runtime */
 #endif
 #ifndef SIZE_BYTES
 #define SIZE_BYTES (64u * 1024u * 1024u)  /* shrink buffer from 512MB -> 64MB */

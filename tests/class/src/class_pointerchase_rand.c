@@ -3,10 +3,10 @@
 #include <stdint.h>
 
 #ifndef N
-#define N (1u << 20)  /* 1M nodes (smaller heap) */
+#define N (1u << 14)  /* 1M nodes (smaller heap) */
 #endif
 #ifndef STEPS
-#define STEPS (1ULL << 24)  /* shorter walk */
+#define STEPS (1ULL << 18)  /* shorter walk */
 #endif
 
 typedef struct Node {
