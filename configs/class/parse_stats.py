@@ -34,6 +34,7 @@ CACHE_METRICS = (
 
 L2_METRICS = (
     ("overallAccesses::total", "Accesses", False),
+    ("overallHits::total", "Hits", False),
     ("overallMisses::total", "Misses", False),
     ("overallMissRate::total", "Miss rate", True),
 )
@@ -151,6 +152,7 @@ def collect_cache_metrics(
 
     metrics = [
         ("overallAccesses::total", "Accesses", False),
+        ("overallHits::total", "Hits", False),
         ("overallMisses::total", "Misses", False),
         ("overallMissRate::total", "Miss rate", True),
         ("writebacks", "Writebacks", False),
@@ -270,7 +272,8 @@ def main() -> None:
         cpu_label = f"CPU{cid}" if cid is not None else "CPU"
         print(f"\n{cpu_label} stats")
         inst_key = f"{prefix}commitStats0.numInsts"
-        instructions = normalise_number(stats.get(inst_key))
+        inst_raw = stats.get(inst_key)
+        instructions = normalise_number(inst_raw) if inst_raw is not None else None
         if instructions is None:
             fallback_inst = stats.get(f"{prefix}numInsts")
             instructions = normalise_number(fallback_inst) if fallback_inst is not None else None

@@ -161,6 +161,64 @@ FIELD_SPECS: List[FieldSpec] = [
         "Memory",
     ),
     FieldSpec(
+        "mem_device_size",
+        "DRAM device size",
+        "text",
+        "Memory",
+        placeholder="512MiB",
+    ),
+    FieldSpec(
+        "mem_device_bus_width",
+        "DRAM device bus width (bits)",
+        "number",
+        "Memory",
+        placeholder="8",
+    ),
+    FieldSpec(
+        "mem_devices_per_rank",
+        "Devices per rank",
+        "number",
+        "Memory",
+        placeholder="8",
+    ),
+    FieldSpec(
+        "mem_ranks_per_channel",
+        "Ranks per channel",
+        "number",
+        "Memory",
+        placeholder="2",
+    ),
+    FieldSpec(
+        "mem_banks_per_rank",
+        "Banks per rank",
+        "number",
+        "Memory",
+        placeholder="8",
+    ),
+    FieldSpec(
+        "mem_bank_groups_per_rank",
+        "Bank groups per rank",
+        "number",
+        "Memory",
+        placeholder="0",
+    ),
+    FieldSpec(
+        "mem_page_policy",
+        "Page policy",
+        "select",
+        "Memory",
+        options=["open", "open_adaptive", "close", "close_adaptive"],
+        default="open_adaptive",
+    ),
+    FieldSpec(
+        "mem_param_overrides",
+        "Advanced memory parameter overrides",
+        "textarea",
+        "Memory",
+        placeholder="system.mem_ctrl.dram.tCL=14\nsystem.mem_ctrl.dram.tRCD=14",
+        help_text="Set advanced DRAM parameters. See DRAMCtrl in src/mem/DRAMCtrl.py for options.",
+    ),
+    FieldSpec(
         "caches",
         "Enable private L1 caches",
         "checkbox",
@@ -325,12 +383,17 @@ def _coerce_checkbox(default: object) -> bool:
     return False
 
 
-def _discover_experiment_configs() -> "OrderedDict[str, List[str]]":
-    experiments: "OrderedDict[str, List[str]]" = OrderedDict()
+def _discover_experiment_configs() -> "OrderedDict[str, OrderedDict[str, List[str]]]":
+    """
+    Discover experiment YAML files, grouped by category and experiment name.
+
+    Returns a nested dictionary: {category: {experiment_path: [config_paths]}}
+    """
+    # Category -> Experiment -> List of config paths
+    experiments: "OrderedDict[str, OrderedDict[str, List[str]]]" = OrderedDict()
     if not EXPERIMENTS_DIR.is_dir():
         return experiments
 
-    # Collect YAML configs grouped by the first directory under configs/class/experiments.
     yaml_files = sorted(EXPERIMENTS_DIR.rglob("*.yaml"))
     for yaml_path in yaml_files:
         if not yaml_path.is_file():
@@ -342,17 +405,26 @@ def _discover_experiment_configs() -> "OrderedDict[str, List[str]]":
             continue
 
         parts = rel_exp_path.parts
-        if not parts:
+        if len(parts) < 3:  # Expect category/experiment/config.yaml
             continue
-        experiment_key = Path("configs", "class", "experiments", parts[0])
+
+        category, experiment_name = parts[0], parts[1]
+        experiment_key = Path("configs", "class", "experiments", category, experiment_name)
         experiment_str = str(experiment_key)
-        experiments.setdefault(experiment_str, [])
-        experiments[experiment_str].append(str(rel_repo_path))
 
-    for key in experiments:
-        experiments[key].sort()
+        experiments.setdefault(category, OrderedDict())
+        experiments[category].setdefault(experiment_str, [])
+        experiments[category][experiment_str].append(str(rel_repo_path))
 
-    return experiments
+    # Sort configs within each experiment
+    for category in experiments:
+        for key in experiments[category]:
+            experiments[category][key].sort()
+        # Sort experiments within each category
+        experiments[category] = OrderedDict(sorted(experiments[category].items()))
+
+    # Sort top-level categories
+    return OrderedDict(sorted(experiments.items()))
 
 
 def _resolve_config_path(raw_path: str) -> Path:
@@ -378,7 +450,8 @@ def _resolve_config_path(raw_path: str) -> Path:
 
 
 def _load_form_values_from_yaml(path: Path) -> Dict[str, str]:
-    overrides: List[str] = []
+    cache_overrides: List[str] = []
+    mem_overrides: List[str] = []
     extra_lines: List[str] = []
     form_values: Dict[str, str] = {}
 
@@ -398,7 +471,11 @@ def _load_form_values_from_yaml(path: Path) -> Dict[str, str]:
 
         if key.startswith("param_cache_"):
             if value:
-                overrides.append(value)
+                cache_overrides.append(value)
+            continue
+        if key.startswith("param_mem_"):
+            if value:
+                mem_overrides.append(value)
             continue
 
         if key in FIELD_NAME_SET:
@@ -410,7 +487,8 @@ def _load_form_values_from_yaml(path: Path) -> Dict[str, str]:
         else:
             extra_lines.append(raw_line.rstrip())
 
-    form_values["cache_param_overrides"] = "\n".join(overrides)
+    form_values["cache_param_overrides"] = "\n".join(cache_overrides)
+    form_values["mem_param_overrides"] = "\n".join(mem_overrides)
     form_values["extra_lines"] = "\n".join(extra_lines)
 
     return form_values
@@ -418,10 +496,11 @@ def _load_form_values_from_yaml(path: Path) -> Dict[str, str]:
 
 def _ordered_config_from_form(
     form_values: Dict[str, str]
-) -> Tuple[OrderedDict[str, object], List[str], str]:
+) -> Tuple[OrderedDict[str, object], List[str], List[str], str]:
     config = OrderedDict()
     errors: List[str] = []
-    param_lines: List[str] = []
+    cache_param_lines: List[str] = []
+    mem_param_lines: List[str] = []
     cache_param_inputs: Dict[str, object] = {}
     global_assoc_value: int | None = None
 
@@ -452,7 +531,15 @@ def _ordered_config_from_form(
                         candidate = line.strip()
                         if not candidate or candidate.startswith("#"):
                             continue
-                        param_lines.append(candidate)
+                        cache_param_lines.append(candidate)
+                continue
+            if spec.name == "mem_param_overrides":
+                if trimmed:
+                    for line in trimmed.splitlines():
+                        candidate = line.strip()
+                        if not candidate or candidate.startswith("#"):
+                            continue
+                        mem_param_lines.append(candidate)
                 continue
 
             if trimmed:
@@ -500,13 +587,16 @@ def _ordered_config_from_form(
         for assoc_key in ASSOC_KEYS:
             config[assoc_key] = global_assoc_value
 
-    param_lines.extend(_generate_cache_param_lines(config, cache_param_inputs))
+    cache_param_lines.extend(_generate_cache_param_lines(config, cache_param_inputs))
 
-    return config, param_lines, extra_lines
+    return config, cache_param_lines, mem_param_lines, extra_lines
 
 
 def _config_to_yaml(
-    config: OrderedDict[str, object], param_lines: List[str], extra_lines: str
+    config: OrderedDict[str, object],
+    cache_param_lines: List[str],
+    mem_param_lines: List[str],
+    extra_lines: str,
 ) -> str:
     lines: List[str] = []
     for key, value in config.items():
@@ -515,8 +605,10 @@ def _config_to_yaml(
         else:
             yaml_value = str(value)
         lines.append(f"{key}: {yaml_value}")
-    for idx, param_line in enumerate(param_lines):
+    for idx, param_line in enumerate(cache_param_lines):
         lines.append(f"param_cache_{idx}: {param_line}")
+    for idx, param_line in enumerate(mem_param_lines):
+        lines.append(f"param_mem_{idx}: {param_line}")
     extra = [line.rstrip() for line in extra_lines.splitlines() if line.strip()]
     if extra:
         lines.extend(extra)
@@ -772,12 +864,25 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
         message = "Simulation launched successfully."
         is_error = False
 
+        if action == "select_category":
+            picked = form_values.get("experiment_category", "")
+            form_values["experiment_choice"] = ""
+            form_values["config_path"] = ""
+            if picked:
+                message = f"Category {picked} selected."
+            else:
+                message = "Category selection cleared."
+            content = self._render_page(
+                form_values, message, yaml_text, stdout, stats, stderr, is_error
+            )
+            self._send_response(content)
+            return
+
         if action == "select_experiment":
             picked = form_values.get("experiment_choice", "")
             form_values["config_path"] = ""
-            yaml_text = ""
             if picked:
-                message = f"Experiment {picked} selected."
+                message = f"Experiment {Path(picked).name} selected."
             else:
                 message = "Experiment selection cleared."
             content = self._render_page(
@@ -804,6 +909,7 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                 rel_path = config_path.relative_to(REPO_ROOT)
                 message = f"Loaded configuration file {rel_path}"
                 form_values["config_path"] = str(rel_path)
+
                 rel_parts = rel_path.parts
                 if (
                     len(rel_parts) >= 4
@@ -811,7 +917,10 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                     and rel_parts[1] == "class"
                     and rel_parts[2] == "experiments"
                 ):
-                    form_values["experiment_choice"] = str(Path(*rel_parts[:4]))
+                    category, experiment_name = rel_parts[3], rel_parts[4]
+                    form_values["experiment_category"] = category
+                    form_values["experiment_choice"] = str(Path(*rel_parts[:5]))
+
             except Exception as exc:
                 message = f"Failed to read configuration: {exc}"
                 is_error = True
@@ -820,8 +929,8 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            ordered_config, param_lines, extra_lines = _ordered_config_from_form(form_values)
-            yaml_text = _config_to_yaml(ordered_config, param_lines, extra_lines)
+            ordered_config, cache_param_lines, mem_param_lines, extra_lines = _ordered_config_from_form(form_values)
+            yaml_text = _config_to_yaml(ordered_config, cache_param_lines, mem_param_lines, extra_lines)
             code, stdout, stderr = _run_simulation(yaml_text)
             stats = _collect_stats() if code == 0 else ""
             if code != 0:
@@ -863,75 +972,71 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
         stderr_block = _html_escape_pre(stderr)
         stats_block = _html_escape_pre(stats)
         extra_lines = html.escape(form_values.get("extra_lines", ""))
-        selected_config_path = form_values.get("config_path", "")
+
+        selected_category = form_values.get("experiment_category", "")
         selected_experiment = form_values.get("experiment_choice", "")
+        selected_config_path = form_values.get("config_path", "")
         experiment_configs = _discover_experiment_configs()
 
-        experiment_select_html = ""
+        # Category selection
+        category_select_html = ""
         if experiment_configs:
+            cat_options: List[str] = []
+            placeholder_selected = " selected" if not selected_category else ""
+            cat_options.append(
+                f'<option value=""{placeholder_selected}>Select category…</option>'
+            )
+            for cat_name in experiment_configs.keys():
+                escaped = html.escape(cat_name)
+                selected = " selected" if cat_name == selected_category else ""
+                cat_options.append(
+                    f'<option value="{escaped}"{selected}>{escaped}</option>'
+                )
+            category_select_html = (
+                f'<select name="experiment_category">{"".join(cat_options)}</select>'
+            )
+
+        # Experiment selection
+        experiment_select_html = ""
+        if selected_category and selected_category in experiment_configs:
             exp_options: List[str] = []
             placeholder_selected = " selected" if not selected_experiment else ""
             exp_options.append(
                 f'<option value=""{placeholder_selected}>Select experiment…</option>'
             )
-            for exp_path in experiment_configs.keys():
-                escaped = html.escape(exp_path)
+            for exp_path in experiment_configs[selected_category].keys():
+                escaped_path = html.escape(exp_path)
+                display_name = html.escape(Path(exp_path).name)
                 selected = " selected" if exp_path == selected_experiment else ""
                 exp_options.append(
-                    f'<option value="{escaped}"{selected}>{escaped}</option>'
-                )
-            if selected_experiment and selected_experiment not in experiment_configs:
-                escaped_selected = html.escape(selected_experiment)
-                exp_options.append(
-                    f'<option value="{escaped_selected}" selected>{escaped_selected}</option>'
+                    f'<option value="{escaped_path}"{selected}>{display_name}</option>'
                 )
             experiment_select_html = (
                 f'<select name="experiment_choice">{"".join(exp_options)}</select>'
             )
-        elif selected_experiment:
-            escaped_selected = html.escape(selected_experiment)
-            experiment_select_html = (
-                f'<select name="experiment_choice">'
-                f'<option value="{escaped_selected}" selected>{escaped_selected}</option>'
-                "</select>"
-            )
 
+        # Config selection
         config_select_html = ""
         if (
-            selected_experiment
-            and selected_experiment in experiment_configs
-            and experiment_configs[selected_experiment]
+            selected_category
+            and selected_experiment
+            and selected_category in experiment_configs
+            and selected_experiment in experiment_configs[selected_category]
         ):
             config_options: List[str] = []
             placeholder_selected = " selected" if not selected_config_path else ""
             config_options.append(
                 f'<option value=""{placeholder_selected}>Select configuration…</option>'
             )
-            seen_paths = set()
-            for path in experiment_configs[selected_experiment]:
+            for path in experiment_configs[selected_category][selected_experiment]:
                 escaped_value = html.escape(path)
                 display_name = html.escape(Path(path).name)
                 selected = " selected" if path == selected_config_path else ""
                 config_options.append(
                     f'<option value="{escaped_value}"{selected}>{display_name}</option>'
                 )
-                seen_paths.add(path)
-            if selected_config_path and selected_config_path not in seen_paths:
-                escaped_selected = html.escape(selected_config_path)
-                display_name = html.escape(Path(selected_config_path).name)
-                config_options.append(
-                    f'<option value="{escaped_selected}" selected>{display_name}</option>'
-                )
             config_select_html = (
                 f'<select name="config_path">{"".join(config_options)}</select>'
-            )
-        elif selected_config_path:
-            escaped_selected = html.escape(selected_config_path)
-            display_name = html.escape(Path(selected_config_path).name)
-            config_select_html = (
-                f'<select name="config_path">'
-                f'<option value="{escaped_selected}" selected>{display_name}</option>'
-                "</select>"
             )
 
         status_class = "status error" if is_error else "status ok"
@@ -1079,13 +1184,16 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                         <input type="hidden" name="action_override" value="{html.escape(form_values.get('action_override', ''))}">
                         <div class="load-config">
                             <label>
-                                Select Experiment
-                                {experiment_select_html or '<p>No experiment directories found.</p>'}
+                                Experiment Category
+                                {category_select_html or '<p>No experiment categories found.</p>'}
+                            </label>
+                            <label>
+                                Specific Experiment
+                                {experiment_select_html or '<p>Select a category first.</p>'}
                             </label>
                             <label>
                                 Load YAML Config
-                                <div class="help">Select an experiment first, then choose a specific configuration.</div>
-                                {config_select_html or ('<p>Select an experiment to view configurations.</p>' if experiment_select_html else '<p>No configuration files found.</p>')}
+                                {config_select_html or '<p>Select an experiment first.</p>'}
                             </label>
                         </div>
                         {sections_html}
@@ -1119,21 +1227,32 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                         var form = document.querySelector("form");
                         var statusBox = document.getElementById("status-msg");
                         var actionOverride = form ? form.querySelector('input[name="action_override"]') : null;
+                        var categorySelect = form ? form.querySelector('select[name="experiment_category"]') : null;
                         var experimentSelect = form ? form.querySelector('select[name="experiment_choice"]') : null;
                         var configSelect = form ? form.querySelector('select[name="config_path"]') : null;
-                        if (!form || !statusBox) {{
+
+                        if (!form || !statusBox || !actionOverride) {{
                             return;
                         }}
-                        if (experimentSelect && actionOverride) {{
-                            experimentSelect.addEventListener("change", function () {{
-                                actionOverride.value = "select_experiment";
-                                if (configSelect) {{
-                                    configSelect.selectedIndex = 0;
-                                }}
+
+                        if (categorySelect) {{
+                            categorySelect.addEventListener("change", function () {{
+                                actionOverride.value = "select_category";
+                                if (experimentSelect) {{ experimentSelect.selectedIndex = 0; }}
+                                if (configSelect) {{ configSelect.selectedIndex = 0; }}
                                 form.submit();
                             }});
                         }}
-                        if (configSelect && actionOverride) {{
+
+                        if (experimentSelect) {{
+                            experimentSelect.addEventListener("change", function () {{
+                                actionOverride.value = "select_experiment";
+                                if (configSelect) {{ configSelect.selectedIndex = 0; }}
+                                form.submit();
+                            }});
+                        }}
+
+                        if (configSelect) {{
                             configSelect.addEventListener("change", function () {{
                                 if (!configSelect.value) {{
                                     return;
@@ -1142,6 +1261,7 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                                 form.submit();
                             }});
                         }}
+
                         form.addEventListener("submit", function (event) {{
                             var submitter = event.submitter;
                             if (!submitter || submitter.value !== "run") {{
