@@ -212,11 +212,11 @@ FIELD_SPECS: List[FieldSpec] = [
     ),
     FieldSpec(
         "mem_param_overrides",
-        "Advanced memory parameter overrides",
+        "Advanced memory parameter",
         "textarea",
         "Memory",
         placeholder="system.mem_ctrl.dram.tCL=14\nsystem.mem_ctrl.dram.tRCD=14",
-        help_text="Set advanced DRAM parameters. See DRAMCtrl in src/mem/DRAMCtrl.py for options.",
+        help_text="See DRAMCtrl in src/mem/DRAMCtrl.py for advanced DRAM options.",
     ),
     FieldSpec(
         "caches",
@@ -483,6 +483,9 @@ def _load_form_values_from_yaml(path: Path) -> Dict[str, str]:
                 lowered = value.lower()
                 form_values[key] = "true" if lowered in {"true", "1", "yes", "on"} else ""
             else:
+                if key == "cmd":
+                    form_values["cmd_raw"] = value
+                    value = _normalize_cmd_value(value)
                 form_values[key] = value
         else:
             extra_lines.append(raw_line.rstrip())
@@ -517,6 +520,13 @@ def _ordered_config_from_form(
             continue
 
         trimmed = raw_value.strip()
+
+        if spec.name == "cmd":
+            raw_cmd_input = form_values.get("cmd_raw", raw_value)
+            trimmed = str(raw_cmd_input).strip()
+            if trimmed:
+                config[spec.name] = trimmed
+            continue
 
         if spec.name == "cache_replacement":
             sanitized = _sanitize_replacement_policy(trimmed)
@@ -641,6 +651,21 @@ def _sanitize_replacement_policy(raw_value: object) -> str:
     return text
 
 
+def _normalize_cmd_value(raw_value: object) -> str:
+    """If multiple commands are separated by ';', keep the first non-empty."""
+    text = str(raw_value).strip()
+    if not text:
+        return ""
+    parts = [part.strip() for part in text.split(";")]
+    for part in parts:
+        if not part:
+            continue
+        if COMMAND_OPTIONS and part in COMMAND_OPTIONS:
+            return part
+        return part
+    return ""
+
+
 def _generate_cache_param_lines(
     config: Dict[str, object], cache_inputs: Dict[str, object]
 ) -> List[str]:
@@ -747,8 +772,11 @@ def _render_sections(form_values: Dict[str, str]) -> str:
                         if default_value is not None
                         else (str(spec.default) if spec.default is not None else "")
                     )
+            raw_value = form_values.get("cmd_raw") if spec.name == "cmd" else None
+            if spec.name == "cmd":
+                current_value = _normalize_cmd_value(raw_value if raw_value is not None else current_value)
 
-            rows.append(_render_field(spec, current_value or ""))
+            rows.append(_render_field(spec, current_value or "", raw_value))
 
         sections_html.append(
             f"<fieldset><legend>{html.escape(section)}</legend>{''.join(rows)}</fieldset>"
@@ -757,13 +785,19 @@ def _render_sections(form_values: Dict[str, str]) -> str:
     return "\n".join(sections_html)
 
 
-def _render_field(spec: FieldSpec, value: str) -> str:
+def _render_field(spec: FieldSpec, value: str, raw_value: str | None = None) -> str:
     label = html.escape(spec.label)
     help_text = (
         f'<div class="help">{html.escape(spec.help_text)}</div>'
         if spec.help_text
         else ""
     )
+
+    hidden_raw_html = ""
+    if spec.name == "cmd":
+        hidden_raw_html = (
+            f'<input type="hidden" name="cmd_raw" value="{html.escape(raw_value or value)}">'
+        )
 
     if spec.field_type == "select":
         options_html = []
@@ -817,7 +851,7 @@ def _render_field(spec: FieldSpec, value: str) -> str:
             f'name="{html.escape(spec.name)}" value="{html.escape(value)}"{placeholder}>'
         )
 
-    return f'<label>{label}{help_text}{control}</label>'
+    return f'<label>{label}{help_text}{control}{hidden_raw_html}</label>'
 
 
 class ConfigUIHandler(BaseHTTPRequestHandler):
@@ -844,6 +878,12 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
             key: values[0] if values else ""
             for key, values in parsed.items()
         }
+
+        raw_cmd_field = form_values.get("cmd_raw", "")
+        raw_cmd = form_values.get("cmd", "")
+        form_values["cmd_raw"] = raw_cmd_field or raw_cmd
+        # Keep only the first command if multiple are provided with semicolons for UI selection.
+        form_values["cmd"] = _normalize_cmd_value(form_values.get("cmd_raw", ""))
 
         for checkbox in CHECKBOX_NAMES:
             if checkbox not in form_values:
@@ -1230,6 +1270,8 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                         var categorySelect = form ? form.querySelector('select[name="experiment_category"]') : null;
                         var experimentSelect = form ? form.querySelector('select[name="experiment_choice"]') : null;
                         var configSelect = form ? form.querySelector('select[name="config_path"]') : null;
+                        var cmdSelect = form ? form.querySelector('[name="cmd"]') : null;
+                        var cmdRawInput = form ? form.querySelector('input[name="cmd_raw"]') : null;
 
                         if (!form || !statusBox || !actionOverride) {{
                             return;
@@ -1262,8 +1304,17 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                             }});
                         }}
 
+                        if (cmdSelect && cmdRawInput) {{
+                            cmdSelect.addEventListener("change", function () {{
+                                cmdRawInput.value = cmdSelect.value;
+                            }});
+                        }}
+
                         form.addEventListener("submit", function (event) {{
                             var submitter = event.submitter;
+                            if (cmdSelect && cmdRawInput && !cmdRawInput.value) {{
+                                cmdRawInput.value = cmdSelect.value;
+                            }}
                             if (!submitter || submitter.value !== "run") {{
                                 return;
                             }}
