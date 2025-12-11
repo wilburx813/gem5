@@ -59,4 +59,8 @@ This repo snapshot includes a lightweight web UI and helper scripts for the **co
    | Read/write queue len (avg)                 | R~1.99 / W~54.6            | R~2.13 / W~54.2          | Slightly higher read queue |
    | RD->WR / WR->RD turnarounds                | ~7.75k                     | ~7.78k                   | Small increase |
 
+**Note:** For full performance details, check `m5out/stats.txt`.
+
    When powerdown is enabled, memory spends more time waking/reactivating, which raises latency and lowers effective bandwidth/IPC; queue lengths tick up slightly, while access mix and miss behavior stay similar for this streaming workload.
+
+   
