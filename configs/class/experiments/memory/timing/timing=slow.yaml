@@ -1,5 +1,5 @@
 cpu-type: X86TimingSimpleCPU
-num-cpus: 1
+num-cpus: 2
 sys-clock: 1GHz
 cpu-clock: 2GHz
 mem-type: DDR4_2400_16x4
@@ -14,14 +14,14 @@ mem_ranks_per_channel: 2
 mem_banks_per_rank: 16
 mem_bank_groups_per_rank: 4
 mem_page_policy: open_adaptive
-param_mem_0: system.mem_ctrls[0].dram.tCL=18ns
-param_mem_1: system.mem_ctrls[0].dram.tRCD=18ns
-param_mem_2: system.mem_ctrls[0].dram.tRP=18ns
-param_mem_3: system.mem_ctrls[0].dram.tRAS=45ns
-param_mem_4: system.mem_ctrls[1].dram.tCL=18ns
-param_mem_5: system.mem_ctrls[1].dram.tRCD=18ns
-param_mem_6: system.mem_ctrls[1].dram.tRP=18ns
-param_mem_7: system.mem_ctrls[1].dram.tRAS=45ns
+param_mem_0: system.mem_ctrls[0].dram.tCL='18ns'
+param_mem_1: system.mem_ctrls[0].dram.tRCD='18ns'
+param_mem_2: system.mem_ctrls[0].dram.tRP='18ns'
+param_mem_3: system.mem_ctrls[0].dram.tRAS='45ns'
+param_mem_4: system.mem_ctrls[1].dram.tCL='18ns'
+param_mem_5: system.mem_ctrls[1].dram.tRCD='18ns'
+param_mem_6: system.mem_ctrls[1].dram.tRP='18ns'
+param_mem_7: system.mem_ctrls[1].dram.tRAS='45ns'
 caches: true
 l2cache: true
 l3cache: false
@@ -30,4 +30,5 @@ l1i_size: 32KiB
 l2_size: 1MiB
 cacheline_size: 64
 cache_assoc: 4
-cmd: tests/class/bin/x86/class_pointerchase_rand
+cmd: tests/class/bin/x86/class_stream_saturate;tests/class/bin/x86/class_stream_saturate
+options: --size-mb 2 --iters 1 --stride 128;--size-mb 2 --iters 1 --stride 128

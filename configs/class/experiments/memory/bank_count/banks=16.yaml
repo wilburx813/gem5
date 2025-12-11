@@ -1,5 +1,5 @@
 cpu-type: X86TimingSimpleCPU
-num-cpus: 1
+num-cpus: 2
 sys-clock: 1GHz
 cpu-clock: 2GHz
 mem-type: DDR4_2400_16x4
@@ -22,4 +22,5 @@ l1i_size: 32KiB
 l2_size: 1MiB
 cacheline_size: 64
 cache_assoc: 4
-cmd: tests/class/bin/x86/class_bank_conflict
+cmd: tests/class/bin/x86/class_stream_saturate;tests/class/bin/x86/class_stream_saturate
+options: --size-mb 2 --iters 1 --stride 128;--size-mb 2 --iters 1 --stride 128
