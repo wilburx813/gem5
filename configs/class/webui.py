@@ -23,6 +23,7 @@ RUN_SCRIPT = REPO_ROOT / "configs" / "class" / "run.sh"
 DEFAULT_CONFIG = CONFIG_DIR / "config.yaml"
 PARSE_STATS = CONFIG_DIR / "parse_stats.py"
 DEFAULT_PORT = 8080
+DEBUG_ENABLED = False
 COMMAND_DIR = REPO_ROOT / "tests" / "class" / "bin" / "x86"
 EXPERIMENTS_DIR = REPO_ROOT / "configs" / "class" / "experiments"
 MEMORY_TYPE_CHOICES = [
@@ -1081,6 +1082,47 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
 
         status_class = "status error" if is_error else "status ok"
 
+        if DEBUG_ENABLED:
+            yaml_section_html = textwrap.dedent(
+                f"""\
+                <section>
+                    <h2>Generated YAML</h2>
+                    {yaml_block or "<p>Submit the form to see the generated configuration.</p>"}
+                </section>
+                """
+            )
+        else:
+            yaml_section_html = ""
+
+        if DEBUG_ENABLED:
+            run_outputs_html = textwrap.dedent(
+                f"""\
+                <section class="grid-two">
+                    <div>
+                        <h2>gem5 stdout</h2>
+                        {stdout_block or "<p>Awaiting run.</p>"}
+                    </div>
+                    <div>
+                        <h2>Stats summary</h2>
+                        {stats_block or "<p>No stats yet.</p>"}
+                    </div>
+                </section>
+                <section>
+                    <h2>stderr</h2>
+                    {stderr_block or "<p>stderr is empty.</p>"}
+                </section>
+                """
+            )
+        else:
+            run_outputs_html = textwrap.dedent(
+                f"""\
+                <section>
+                    <h2>Stats summary</h2>
+                    {stats_block or "<p>No stats yet.</p>"}
+                </section>
+                """
+            )
+
         return textwrap.dedent(
             f"""\
             <!DOCTYPE html>
@@ -1089,19 +1131,49 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                 <meta charset="utf-8">
                 <title>gem5 class webui</title>
                 <style>
+                    :root {{
+                        --bg: linear-gradient(135deg, #f8fafc 0%, #eef2f7 45%, #e5ebf3 100%);
+                        --card: #ffffff;
+                        --muted: #6b7280;
+                        --border: #e5e7eb;
+                        --accent: #2563eb;
+                        --accent-strong: #0ea5e9;
+                        --ok: #16a34a;
+                        --error: #dc2626;
+                        --running: #d97706;
+                        --text: #0f172a;
+                        --heading: #0b1220;
+                        --shadow: 0 14px 48px rgba(15, 23, 42, 0.12);
+                    }}
+                    * {{ box-sizing: border-box; }}
                     body {{
-                        font-family: sans-serif;
+                        font-family: "Inter", "Segoe UI", "Helvetica Neue", sans-serif;
                         margin: 0;
                         padding: 0;
-                        background: #f3f4f6;
+                        min-height: 100vh;
+                        background: var(--bg);
+                        color: var(--text);
                     }}
                     header {{
-                        padding: 1rem 2rem;
-                        background: #111827;
-                        color: #fff;
+                        padding: 1.25rem 2rem;
+                        background: rgba(255, 255, 255, 0.85);
+                        backdrop-filter: blur(10px);
+                        border-bottom: 1px solid var(--border);
+                        box-shadow: var(--shadow);
+                    }}
+                    header h1 {{
+                        margin: 0;
+                        font-size: 1.6rem;
+                        letter-spacing: 0.2px;
+                        color: var(--heading);
                     }}
                     main {{
-                        padding: 1.5rem 2rem 3rem;
+                        padding: 2rem 1.5rem 3rem;
+                        max-width: 1440px;
+                        margin: 0 auto;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 1.2rem;
                     }}
                     form {{
                         display: grid;
@@ -1109,9 +1181,14 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                     }}
                     .load-config {{
                         display: grid;
-                        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-                        gap: 0.75rem 1rem;
+                        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                        gap: 0.9rem 1rem;
                         align-items: end;
+                        background: var(--card);
+                        border: 1px solid var(--border);
+                        border-radius: 0.9rem;
+                        padding: 1rem 1.25rem;
+                        box-shadow: var(--shadow);
                     }}
                     .load-config label {{
                         margin: 0;
@@ -1119,98 +1196,148 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                     .load-config p {{
                         margin: 0;
                         font-size: 0.9rem;
-                        color: #6b7280;
+                        color: var(--muted);
                     }}
                     fieldset {{
-                        border: 1px solid #d1d5db;
-                        border-radius: 0.5rem;
-                        padding: 1rem 1.5rem;
-                        background: #fff;
+                        border: 1px solid var(--border);
+                        border-radius: 0.95rem;
+                        padding: 1rem 1.25rem;
+                        background: var(--card);
                         display: grid;
-                        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-                        gap: 0.8rem 1.2rem;
+                        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+                        gap: 0.9rem 1.1rem;
+                        box-shadow: var(--shadow);
                     }}
                     legend {{
-                        font-weight: 600;
-                        padding: 0 0.5rem;
+                        font-weight: 700;
+                        padding: 0 0.6rem;
+                        color: var(--heading);
+                        letter-spacing: 0.1px;
                     }}
                     label {{
                         font-size: 0.95rem;
                         display: flex;
                         flex-direction: column;
-                        gap: 0.25rem;
+                        gap: 0.35rem;
+                        color: var(--text);
                     }}
                     label input,
                     label select {{
-                        padding: 0.35rem 0.5rem;
-                        border-radius: 0.375rem;
-                        border: 1px solid #9ca3af;
+                        padding: 0.55rem 0.65rem;
+                        border-radius: 0.55rem;
+                        border: 1px solid var(--border);
                         font-size: 0.95rem;
+                        background: #f8fafc;
+                        color: var(--text);
+                        outline: none;
+                        transition: border 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+                    }}
+                    label input:focus,
+                    label select:focus,
+                    textarea:focus {{
+                        border-color: var(--accent);
+                        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+                        background: #ffffff;
                     }}
                     label input[type="checkbox"] {{
                         width: auto;
                         align-self: flex-start;
+                        accent-color: var(--accent);
+                        box-shadow: none;
                     }}
                     .help {{
-                        font-size: 0.75rem;
-                        color: #6b7280;
+                        font-size: 0.82rem;
+                        color: var(--muted);
+                        line-height: 1.3;
                     }}
                     textarea {{
                         width: 100%;
-                        min-height: 6rem;
-                        border-radius: 0.375rem;
-                        border: 1px solid #9ca3af;
-                        padding: 0.5rem;
+                        min-height: 7rem;
+                        border-radius: 0.65rem;
+                        border: 1px solid var(--border);
+                        padding: 0.7rem;
+                        background: #f8fafc;
+                        color: var(--text);
                         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-                        font-size: 0.85rem;
+                        font-size: 0.9rem;
+                        transition: border 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
                     }}
                     button {{
                         justify-self: start;
-                        padding: 0.5rem 1rem;
-                        border-radius: 0.5rem;
-                        border: none;
-                        background: #2563eb;
+                        padding: 0.65rem 1.3rem;
+                        border-radius: 0.95rem;
+                        border: 1px solid transparent;
+                        background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
                         color: #fff;
                         font-size: 1rem;
+                        font-weight: 700;
                         cursor: pointer;
+                        letter-spacing: 0.1px;
+                        transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+                        box-shadow: 0 10px 26px rgba(37, 99, 235, 0.25);
                     }}
                     button:hover {{
-                        background: #1d4ed8;
+                        transform: translateY(-1px);
+                        filter: brightness(1.03);
+                    }}
+                    button:active {{
+                        transform: translateY(0);
+                        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.2);
                     }}
                     .status {{
-                        padding: 0.75rem 1rem;
-                        border-radius: 0.5rem;
-                        font-weight: 500;
-                        transition: background 0.2s ease, color 0.2s ease;
+                        padding: 0.95rem 1.1rem;
+                        border-radius: 0.95rem;
+                        font-weight: 600;
+                        border: 1px solid var(--border);
+                        background: var(--card);
+                        box-shadow: var(--shadow);
+                        display: flex;
+                        align-items: center;
+                        gap: 0.5rem;
                     }}
                     .status.ok {{
-                        background: #dcfce7;
-                        color: #166534;
+                        border-color: rgba(22, 163, 74, 0.35);
+                        color: var(--ok);
                     }}
                     .status.error {{
-                        background: #fee2e2;
-                        color: #991b1b;
+                        border-color: rgba(220, 38, 38, 0.35);
+                        color: var(--error);
                     }}
                     .status.running {{
-                        background: #dbeafe;
-                        color: #1e3a8a;
+                        border-color: rgba(217, 119, 6, 0.35);
+                        color: var(--running);
                     }}
                     h2 {{
-                        margin-top: 2rem;
+                        margin-top: 1.4rem;
                         font-size: 1.2rem;
+                        color: var(--heading);
+                        letter-spacing: 0.1px;
                     }}
                     pre {{
-                        background: #111827;
-                        color: #f9fafb;
-                        padding: 1rem;
-                        border-radius: 0.5rem;
+                        background: #0f172a;
+                        color: #e2e8f0;
+                        padding: 1rem 1.1rem;
+                        border-radius: 0.8rem;
                         overflow-x: auto;
-                        font-size: 0.85rem;
+                        font-size: 0.9rem;
+                        border: 1px solid #1f2937;
+                        box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+                        max-height: 420px;
+                        overflow-y: auto;
+                        white-space: pre-wrap;
+                        word-break: break-word;
+                    }}
+                    section {{
+                        background: var(--card);
+                        border: 1px solid var(--border);
+                        border-radius: 0.95rem;
+                        padding: 1.1rem 1.3rem;
+                        box-shadow: var(--shadow);
                     }}
                     .grid-two {{
                         display: grid;
                         grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-                        gap: 1.2rem;
+                        gap: 1rem;
                     }}
                 </style>
             </head>
@@ -1243,24 +1370,8 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                         </label>
                         <button type="submit" name="action" value="run">Run gem5</button>
                     </form>
-                    <section>
-                        <h2>Generated YAML</h2>
-                        {yaml_block or "<p>Submit the form to see the generated configuration.</p>"}
-                    </section>
-                    <section class="grid-two">
-                        <div>
-                            <h2>gem5 stdout</h2>
-                            {stdout_block or "<p>Awaiting run.</p>"}
-                        </div>
-                        <div>
-                            <h2>Stats summary</h2>
-                            {stats_block or "<p>No stats yet.</p>"}
-                        </div>
-                    </section>
-                    <section>
-                        <h2>stderr</h2>
-                        {stderr_block or "<p>stderr is empty.</p>"}
-                    </section>
+                    {yaml_section_html}
+                    {run_outputs_html}
                 </main>
                 <script>
                     document.addEventListener("DOMContentLoaded", function () {{
@@ -1345,10 +1456,15 @@ def serve(host: str, port: int) -> None:
 
 
 def main(argv: List[str] | None = None) -> int:
+    global DEBUG_ENABLED
+
     parser = argparse.ArgumentParser(description="Simple web UI for configs/class flows")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Bind port (default: {DEFAULT_PORT})")
+    parser.add_argument("--debug", action="store_true", help="Show stdout/stderr output in UI")
     args = parser.parse_args(argv)
+
+    DEBUG_ENABLED = args.debug
 
     serve(args.host, args.port)
     return 0
