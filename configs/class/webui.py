@@ -1088,6 +1088,10 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                 <section>
                     <h2>Generated YAML</h2>
                     {yaml_block or "<p>Submit the form to see the generated configuration.</p>"}
+                    <div>
+                        <h3>Additional YAML lines</h3>
+                        <textarea name="extra_lines" placeholder="Example:&#10;ruby: true">{extra_lines}</textarea>
+                    </div>
                 </section>
                 """
             )
@@ -1364,10 +1368,6 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                             </label>
                         </div>
                         {sections_html}
-                        <label>
-                            Additional YAML lines
-                            <textarea name="extra_lines" placeholder="Example:&#10;ruby: true">{extra_lines}</textarea>
-                        </label>
                         <button type="submit" name="action" value="run">Run gem5</button>
                     </form>
                     {yaml_section_html}
