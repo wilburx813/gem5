@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import importlib.util
 import os
 import subprocess
 import sys
@@ -729,19 +730,118 @@ def _run_simulation(yaml_text: str) -> Tuple[int, str, str]:
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def _collect_stats() -> str:
-    if not (REPO_ROOT / "m5out" / "stats.txt").is_file():
-        return ""
+def _load_parse_stats_module():
+    spec = importlib.util.spec_from_file_location("class_parse_stats", PARSE_STATS)
+    if spec is None or spec.loader is None:
+        raise ImportError("Unable to load parse_stats module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
-    proc = subprocess.run(
-        ["python3", str(PARSE_STATS)],
-        cwd=str(REPO_ROOT),
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        return proc.stderr or proc.stdout
-    return proc.stdout
+
+def _collect_stats_groups() -> Tuple[str, Dict[str, List[Dict[str, List[Tuple[str, str]]]]]]:
+    """
+    使用 parse_stats.py 构建分组后的统计数据，同时返回原始文本摘要。
+    返回: (raw_text, {"simulation": [...], "cpu": [...], "cache": [...], "dram": [...]})
+    """
+    stats_path = REPO_ROOT / "m5out" / "stats.txt"
+    if not stats_path.is_file():
+        return "", {}
+
+    try:
+        ps = _load_parse_stats_module()
+    except Exception as exc:
+        return f"Failed to load parse_stats: {exc}", {}
+
+    try:
+        stats = ps.parse_stats_file(stats_path)
+    except Exception as exc:
+        return f"Failed to parse stats.txt: {exc}", {}
+
+    if not stats:
+        return "No statistics parsed from file", {}
+
+    tick_hz = ps.normalise_number(stats.get("simFreq"))
+
+    groups: Dict[str, List[Dict[str, List[Tuple[str, str]]]]] = {
+        "simulation": [],
+        "cpu": [],
+        "cache": [],
+        "dram": [],
+    }
+    raw_lines: List[str] = []
+
+    # Simulation summary
+    sim_rows = [(label, value) for label, value in ps.extract(ps.GENERAL_METRICS, "", stats)]
+    if sim_rows:
+        groups["simulation"].append({"title": "Simulation summary", "rows": sim_rows})
+        raw_lines.append("Simulation summary")
+        raw_lines.extend([f"  {l}: {v}" for l, v in sim_rows])
+
+    total_instructions: float = 0.0
+    have_instruction_data = False
+
+    # CPU + per-core caches
+    for cid in ps.collect_cpu_ids(stats):
+        prefix = f"system.cpu{cid}." if cid is not None else "system.cpu."
+        cpu_label = f"CPU{cid}" if cid is not None else "CPU"
+
+        inst_key = f"{prefix}commitStats0.numInsts"
+        inst_raw = stats.get(inst_key)
+        instructions = ps.normalise_number(inst_raw) if inst_raw is not None else None
+        if instructions is None:
+            fallback_inst = stats.get(f"{prefix}numInsts")
+            instructions = ps.normalise_number(fallback_inst) if fallback_inst is not None else None
+        if instructions is not None:
+            have_instruction_data = True
+            try:
+                total_instructions += float(instructions)
+            except (TypeError, ValueError):
+                pass
+
+        cpu_rows = [(label, value) for label, value in ps.extract(ps.CPU_METRICS, prefix, stats) if value != "<n/a>"]
+        if cpu_rows:
+            groups["cpu"].append({"title": cpu_label, "rows": cpu_rows})
+            raw_lines.append(f"\n{cpu_label} stats")
+            raw_lines.extend([f"  {l}: {v}" for l, v in cpu_rows])
+
+        cache_rows: List[Tuple[str, str]] = []
+        for cache_name, cache_label in ps.CACHE_METRICS:
+            cache_rows.extend(
+                (label, value)
+                for label, value in ps.collect_cache_metrics(cache_name, cache_label, prefix, stats, instructions)
+                if value != "<n/a>"
+            )
+        if cache_rows:
+            groups["cache"].append({"title": f"{cpu_label} cache", "rows": cache_rows})
+            raw_lines.append(f"\n{cpu_label} cache")
+            raw_lines.extend([f"  {l}: {v}" for l, v in cache_rows])
+
+    total_instructions_value = total_instructions if have_instruction_data else None
+
+    # Shared cache (L2/L3)
+    l2_rows = [(label, value) for label, value in ps.collect_l2(stats, total_instructions_value) if value != "<n/a>"]
+    if l2_rows:
+        groups["cache"].append({"title": "Shared cache", "rows": l2_rows})
+        raw_lines.append("\nShared cache")
+        raw_lines.extend([f"  {l}: {v}" for l, v in l2_rows])
+
+    # DRAM controllers
+    mem_ctrls = ps.discover_memory_controllers(stats)
+    for ctrl_label, prefix in mem_ctrls:
+        entries = [
+            (label, value)
+            for label, value in ps.collect_memory_controller_stats(prefix, stats, tick_hz)
+            if value != "<n/a>"
+        ]
+        if not entries:
+            continue
+        groups["dram"].append({"title": ctrl_label, "rows": entries})
+        raw_lines.append(f"\nMemory controller ({ctrl_label})")
+        raw_lines.extend([f"  {l}: {v}" for l, v in entries])
+
+    raw_text = "\n".join(raw_lines)
+    return raw_text, groups
 
 
 def _html_escape_pre(text: str) -> str:
@@ -784,6 +884,60 @@ def _render_sections(form_values: Dict[str, str]) -> str:
         )
 
     return "\n".join(sections_html)
+
+
+def _render_stat_card(title: str, rows: Iterable[Tuple[str, str]]) -> str:
+    safe_rows = [
+        (html.escape(label), html.escape(value))
+        for label, value in rows
+        if label and value
+    ]
+    if not safe_rows:
+        return ""
+    rows_html = "".join(
+        f"<tr><td>{label}</td><td>{value}</td></tr>" for label, value in safe_rows
+    )
+    return (
+        f'<div class="stat-card">'
+        f'<div class="stat-card__title">{html.escape(title)}</div>'
+        f"<table>{rows_html}</table>"
+        f"</div>"
+    )
+
+
+def _render_stats_html(
+    stats_groups: Dict[str, List[Dict[str, List[Tuple[str, str]]]]],
+    stats_text: str,
+) -> str:
+    if not stats_groups and not stats_text.strip():
+        return ""
+
+    sections: List[str] = []
+    if stats_groups:
+        for key, heading in [
+            ("simulation", "Simulation summary"),
+            ("cpu", "CPU"),
+            ("cache", "Cache"),
+            ("dram", "DRAM"),
+        ]:
+            cards_data = stats_groups.get(key) or []
+            cards_html = "".join(
+                _render_stat_card(card.get("title", heading), card.get("rows", []))
+                for card in cards_data
+            )
+            if not cards_html:
+                continue
+            sections.append(
+                f'<div class="stats-section"><h3>{html.escape(heading)}</h3>'
+                f'<div class="stats-grid">{cards_html}</div></div>'
+            )
+
+    if not sections and stats_text.strip():
+        sections.append(_html_escape_pre(stats_text))
+
+    if not sections:
+        return ""
+    return f'<div id="stats-container" class="stats-wrapper">{"".join(sections)}</div>'
 
 
 def _render_field(spec: FieldSpec, value: str, raw_value: str | None = None) -> str:
@@ -867,6 +1021,7 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
             "",
             "",
             "",
+            {},
         )
         self._send_response(content)
 
@@ -901,7 +1056,8 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
         yaml_text = ""
         stdout = ""
         stderr = ""
-        stats = ""
+        stats_text = ""
+        stats_groups: Dict[str, List[Dict[str, List[Tuple[str, str]]]]] = {}
         message = "Simulation launched successfully."
         is_error = False
 
@@ -914,7 +1070,7 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
             else:
                 message = "Category selection cleared."
             content = self._render_page(
-                form_values, message, yaml_text, stdout, stats, stderr, is_error
+                form_values, message, yaml_text, stdout, stats_text, stats_groups, stderr, is_error
             )
             self._send_response(content)
             return
@@ -927,7 +1083,7 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
             else:
                 message = "Experiment selection cleared."
             content = self._render_page(
-                form_values, message, yaml_text, stdout, stats, stderr, is_error
+                form_values, message, yaml_text, stdout, stats_text, stats_groups, stderr, is_error
             )
             self._send_response(content)
             return
@@ -938,7 +1094,7 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                 message = "Select a configuration file before loading."
                 is_error = True
                 content = self._render_page(
-                    form_values, message, yaml_text, stdout, stats, stderr, is_error
+                    form_values, message, yaml_text, stdout, stats_text, stats_groups, stderr, is_error
                 )
                 self._send_response(content)
                 return
@@ -965,7 +1121,7 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 message = f"Failed to read configuration: {exc}"
                 is_error = True
-            content = self._render_page(form_values, message, yaml_text, stdout, stats, stderr, is_error)
+            content = self._render_page(form_values, message, yaml_text, stdout, stats_text, stats_groups, stderr, is_error)
             self._send_response(content)
             return
 
@@ -973,7 +1129,8 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
             ordered_config, cache_param_lines, mem_param_lines, extra_lines = _ordered_config_from_form(form_values)
             yaml_text = _config_to_yaml(ordered_config, cache_param_lines, mem_param_lines, extra_lines)
             code, stdout, stderr = _run_simulation(yaml_text)
-            stats = _collect_stats() if code == 0 else ""
+            if code == 0:
+                stats_text, stats_groups = _collect_stats_groups()
             if code != 0:
                 message = f"Simulation failed (exit code {code})."
                 is_error = True
@@ -981,7 +1138,7 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
             message = f"Form processing failed: {exc}"
             is_error = True
 
-        content = self._render_page(form_values, message, yaml_text, stdout, stats, stderr, is_error)
+        content = self._render_page(form_values, message, yaml_text, stdout, stats_text, stats_groups, stderr, is_error)
         self._send_response(content)
 
     def log_message(self, format: str, *args: object) -> None:
@@ -1003,7 +1160,8 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
         message: str,
         yaml_text: str,
         stdout: str,
-        stats: str,
+        stats_text: str,
+        stats_groups: Dict[str, List[Dict[str, List[Tuple[str, str]]]]],
         stderr: str = "",
         is_error: bool = False,
     ) -> str:
@@ -1011,8 +1169,13 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
         yaml_block = _html_escape_pre(yaml_text)
         stdout_block = _html_escape_pre(stdout)
         stderr_block = _html_escape_pre(stderr)
-        stats_block = _html_escape_pre(stats)
+        stats_block = _render_stats_html(stats_groups, stats_text)
         extra_lines = html.escape(form_values.get("extra_lines", ""))
+        stats_toggle_html = (
+            '<button type="button" id="toggle-stats" class="ghost-btn">Collapse all</button>'
+            if stats_block
+            else ""
+        )
 
         selected_category = form_values.get("experiment_category", "")
         selected_experiment = form_values.get("experiment_choice", "")
@@ -1107,7 +1270,7 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                         {stdout_block or "<p>Awaiting run.</p>"}
                     </div>
                     <div>
-                        <h2>Stats summary</h2>
+                        <h2 class="stats-header">Stats summary {stats_toggle_html}</h2>
                         {stats_block or "<p>No stats yet.</p>"}
                     </div>
                 </section>
@@ -1121,7 +1284,7 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
             run_outputs_html = textwrap.dedent(
                 f"""\
                 <section>
-                    <h2>Stats summary</h2>
+                    <h2 class="stats-header">Stats summary {stats_toggle_html}</h2>
                     {stats_block or "<p>No stats yet.</p>"}
                 </section>
                 """
@@ -1343,6 +1506,86 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                         grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
                         gap: 1rem;
                     }}
+                    .stats-section h3 {{
+                        margin: 0 0 0.5rem;
+                        font-size: 1.05rem;
+                        color: var(--heading);
+                    }}
+                    .stats-grid {{
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+                        gap: 0.75rem;
+                    }}
+                    .stats-header {{
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        gap: 0.6rem;
+                        margin: 0;
+                    }}
+                    .ghost-btn {{
+                        border: 1px solid var(--border);
+                        background: #f8fafc;
+                        color: var(--text);
+                        border-radius: 0.6rem;
+                        padding: 0.35rem 0.6rem;
+                        font-size: 0.9rem;
+                        cursor: pointer;
+                        transition: background 0.12s ease, border 0.12s ease;
+                    }}
+                    .ghost-btn:hover {{
+                        background: #e5e7eb;
+                        border-color: #d1d5db;
+                    }}
+                    #stats-container.collapsed .stats-section,
+                    #stats-container.collapsed .stats-grid,
+                    #stats-container.collapsed pre {{
+                        display: none;
+                    }}
+                    #stats-container.collapsed::after {{
+                        content: "Stats collapsed";
+                        color: var(--muted);
+                        display: block;
+                        padding: 0.2rem 0;
+                    }}
+                    .stat-card {{
+                        background: linear-gradient(180deg, #0f172a, #111827);
+                        color: #e5e7eb;
+                        border-radius: 0.85rem;
+                        padding: 0.9rem 1rem;
+                        border: 1px solid rgba(255, 255, 255, 0.05);
+                        box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 18px 30px rgba(15, 23, 42, 0.28);
+                    }}
+                    .stat-card__title {{
+                        font-weight: 700;
+                        margin-bottom: 0.35rem;
+                        color: #f8fafc;
+                        font-size: 1rem;
+                    }}
+                    .stat-card table {{
+                        width: 100%;
+                        border-collapse: collapse;
+                        font-size: 0.92rem;
+                    }}
+                    .stat-card td {{
+                        padding: 0.18rem 0;
+                        vertical-align: top;
+                    }}
+                    .stat-card td:first-child {{
+                        color: #cbd5e1;
+                        width: 55%;
+                        padding-right: 0.4rem;
+                    }}
+                    .stat-card td:last-child {{
+                        color: #f8fafc;
+                        font-variant-numeric: tabular-nums;
+                        text-align: right;
+                    }}
+                    .stats-wrapper {{
+                        display: flex;
+                        flex-direction: column;
+                        gap: 0.9rem;
+                    }}
                 </style>
             </head>
             <body>
@@ -1436,6 +1679,20 @@ class ConfigUIHandler(BaseHTTPRequestHandler):
                             submitter.style.opacity = "0.7";
                             submitter.style.cursor = "wait";
                         }});
+
+                        var statsToggle = document.getElementById("toggle-stats");
+                        var statsContainer = document.getElementById("stats-container");
+                        if (statsToggle && statsContainer) {{
+                            var updateLabel = function () {{
+                                var collapsed = statsContainer.classList.contains("collapsed");
+                                statsToggle.textContent = collapsed ? "Expand all" : "Collapse all";
+                            }};
+                            statsToggle.addEventListener("click", function () {{
+                                statsContainer.classList.toggle("collapsed");
+                                updateLabel();
+                            }});
+                            updateLabel();
+                        }}
                     }});
                 </script>
             </body>
