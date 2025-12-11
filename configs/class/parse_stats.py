@@ -229,7 +229,8 @@ def collect_l2(stats: Dict[str, str], instructions: Optional[Number]) -> Iterabl
 
 
 def discover_memory_controllers(stats: Dict[str, str]) -> List[Tuple[str, str]]:
-    ctrl_regex = re.compile(r"^system\.(mem_ctrls(?:\[\d+\])?|mem_ctrl)\.")
+    # 支持多种命名：mem_ctrls[0].foo、mem_ctrls0.foo、mem_ctrl.foo
+    ctrl_regex = re.compile(r"^system\.(mem_ctrls(?:\[\d+\]|\d+)?|mem_ctrl)\.")
     controllers: Dict[str, str] = {}
     for key in stats.keys():
         match = ctrl_regex.match(key)
@@ -245,6 +246,8 @@ def discover_memory_controllers(stats: Dict[str, str]) -> List[Tuple[str, str]]:
     for suffix, prefix in sorted_items:
         if suffix.startswith("mem_ctrls["):
             label = f"MemCtrl[{suffix.split('[')[1].rstrip(']')}]"
+        elif suffix.startswith("mem_ctrls") and suffix[len("mem_ctrls"):].isdigit():
+            label = f"MemCtrl[{suffix[len('mem_ctrls'):]}]"
         elif suffix == "mem_ctrls":
             label = "MemCtrls"
         else:

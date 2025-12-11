@@ -15,6 +15,7 @@ cache_assoc_value=""
 cache_is_read_only_value=""
 cache_writeback_clean_value=""
 num_cpus_value=""
+mem_type_value=""
 caches_enabled=""
 l2cache_enabled=""
 mem_channels_value=""
@@ -117,6 +118,8 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     value_lower=$(printf "%s" "$value" | tr "[:upper:]" "[:lower:]")
     if [[ "$key" == "num-cpus" ]]; then
         num_cpus_value="$value"
+    elif [[ "$key" == "mem-type" ]]; then
+        mem_type_value="$value"
     elif [[ "$key" == "caches" ]]; then
         caches_enabled="$value_lower"
     elif [[ "$key" == "l2cache" ]]; then
@@ -205,30 +208,32 @@ if bool_value=$(normalise_bool "$cache_writeback_clean_value"); then
     fi
 fi
 
-# 统一为所有内存控制器设置组织参数（若提供）
-for ((i = 0; i < mem_channels_value; i++)); do
-    if [[ -n "$mem_device_size_value" ]]; then
-        param_args+=("system.mem_ctrls[$i].dram.device_size=$(quote_param_value "$mem_device_size_value")")
-    fi
-    if [[ -n "$mem_device_bus_width_value" ]]; then
-        param_args+=("system.mem_ctrls[$i].dram.device_bus_width=$(quote_param_value "$mem_device_bus_width_value")")
-    fi
-    if [[ -n "$mem_devices_per_rank_value" ]]; then
-        param_args+=("system.mem_ctrls[$i].dram.devices_per_rank=$(quote_param_value "$mem_devices_per_rank_value")")
-    fi
-    if [[ -n "$mem_ranks_per_channel_value" ]]; then
-        param_args+=("system.mem_ctrls[$i].dram.ranks_per_channel=$(quote_param_value "$mem_ranks_per_channel_value")")
-    fi
-    if [[ -n "$mem_banks_per_rank_value" ]]; then
-        param_args+=("system.mem_ctrls[$i].dram.banks_per_rank=$(quote_param_value "$mem_banks_per_rank_value")")
-    fi
-    if [[ -n "$mem_bank_groups_per_rank_value" ]]; then
-        param_args+=("system.mem_ctrls[$i].dram.bank_groups_per_rank=$(quote_param_value "$mem_bank_groups_per_rank_value")")
-    fi
-    if [[ -n "$mem_page_policy_value" ]]; then
-        param_args+=("system.mem_ctrls[$i].dram.page_policy=$(quote_param_value "$mem_page_policy_value")")
-    fi
-done
+# 统一为所有 DRAM 控制器设置组织参数（若提供）。SimpleMemory 和 HMC 结构不同，不追加这些参数。
+if [[ "$mem_type_value" != "SimpleMemory" && "$mem_type_value" != HMC_* ]]; then
+    for ((i = 0; i < mem_channels_value; i++)); do
+        if [[ -n "$mem_device_size_value" ]]; then
+            param_args+=("system.mem_ctrls[$i].dram.device_size=$(quote_param_value "$mem_device_size_value")")
+        fi
+        if [[ -n "$mem_device_bus_width_value" ]]; then
+            param_args+=("system.mem_ctrls[$i].dram.device_bus_width=$(quote_param_value "$mem_device_bus_width_value")")
+        fi
+        if [[ -n "$mem_devices_per_rank_value" ]]; then
+            param_args+=("system.mem_ctrls[$i].dram.devices_per_rank=$(quote_param_value "$mem_devices_per_rank_value")")
+        fi
+        if [[ -n "$mem_ranks_per_channel_value" ]]; then
+            param_args+=("system.mem_ctrls[$i].dram.ranks_per_channel=$(quote_param_value "$mem_ranks_per_channel_value")")
+        fi
+        if [[ -n "$mem_banks_per_rank_value" ]]; then
+            param_args+=("system.mem_ctrls[$i].dram.banks_per_rank=$(quote_param_value "$mem_banks_per_rank_value")")
+        fi
+        if [[ -n "$mem_bank_groups_per_rank_value" ]]; then
+            param_args+=("system.mem_ctrls[$i].dram.bank_groups_per_rank=$(quote_param_value "$mem_bank_groups_per_rank_value")")
+        fi
+        if [[ -n "$mem_page_policy_value" ]]; then
+            param_args+=("system.mem_ctrls[$i].dram.page_policy=$(quote_param_value "$mem_page_policy_value")")
+        fi
+    done
+fi
 
 # 附加 --param 覆盖
 for p in "${param_args[@]}"; do
