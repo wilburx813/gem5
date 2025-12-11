@@ -36,16 +36,16 @@ configs/dram/lowp_sweep.cfg
 .vscode
 typings
 .DS_Store
-pic
+stats_pic
 ppt
 /configs/class/results
 /configs/class/cache_assoc_experiment.py
 /prebuilt/
 /prebuilt-gem5-X86.tar.gz
 # Ignore test binaries
-/tests/**/bin/
+
 /home/wilburx/gem5/configs/class/result
-/home/wilburx/gem5/configs/class/run_all_experiments.py
+# /home/wilburx/gem5/configs/class/run_all_experiments.py
 
 # Slides build artifacts and intermediates
 /slides/gem5_intro/tectonic
